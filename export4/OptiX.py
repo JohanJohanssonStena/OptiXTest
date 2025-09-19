@@ -797,12 +797,26 @@ class Start(tk.Frame):
 
                 
         for i in range(0,n): #bygger listor med ett recept per position
+            # Sannolikhets-variance-caps per recept (exkl. 4 och 22)
+            A_probcap_i = np.empty((0, len(self.set_artnum_p)))
+            b_probcap_i = np.empty(0)
+            if hasattr(self.controller, 'prob_caps') and i in self.controller.prob_caps:
+                for e, rhs in self.controller.prob_caps[i].items():
+                    if e in (4, 22):
+                        continue
+                    row = self.controller.all_test_std[:, e] ** 2
+                    A_probcap_i = np.vstack((A_probcap_i, row))
+                    b_probcap_i = np.hstack((b_probcap_i, rhs))
+
             A[i] = np.transpose(self.set_mean_final) 
             A[i] = np.vstack((A[i], A[i]*(-1)))
             A[i] = np.vstack((A[i], selected_test_std[i]))
             A[i] = np.vstack((A[i], A_add_on_i[i]/self.set_exchange))
             A[i] = np.vstack((A[i], mr_A_add_on/self.set_exchange))
             A[i] = np.vstack((A[i], lmr_A_add_on[i]/self.set_exchange))
+            # injicera sannolikhets-caps
+            if A_probcap_i.size > 0:
+                A[i] = np.vstack((A[i], A_probcap_i))
             A[i] = np.vstack((A[i], max_amount_A))
             b[i] = self.controller.cp_dict['tol_max'][i] * self.controller.cp_dict['weight_out'][i]
             b[i] = np.hstack((b[i], self.controller.cp_dict['tol_min'][i] *(-1) * self.controller.cp_dict['weight_out'][i]))
@@ -810,6 +824,9 @@ class Start(tk.Frame):
             b[i] = np.hstack((b[i], self.b_add_on))
             b[i] = np.hstack((b[i], mr_b_add_on))
             b[i] = np.hstack((b[i], lmr_b_add_on[i]))
+            # injicera b-led för sannolikhets-caps
+            if b_probcap_i.size > 0:
+                b[i] = np.hstack((b[i], b_probcap_i))
             b[i] = np.hstack((b[i], np.array([self.controller.cp_dict['weight_in'][i]])))
             Aeq[i] = np.ones((1, (len(self.set_artnum_p))))
             Aeq[i] = np.vstack((Aeq[i], mr_Aeq_add_on/self.set_exchange))
@@ -993,279 +1010,161 @@ class Start(tk.Frame):
                     self.cost_calculator(index=i)
                 self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
 
-                # --- OPTIX_RULE_ADJUST START --- (ändring) - försök nå målnivå genom regeljustering baserat på lager
-                # 1) Läs mål (procent) från UI om det finns; standard 70 %
+                # --- OPTIX_PROB_CAPS START --- (ändring) - iterativ LP med sannolikhets-caps (outer_max-baserad), exkluderar 4 och 22
                 try:
                     target_prob = float(self.controller.target_pct_var.get())/100.0
                 except Exception:
                     target_prob = 0.70
-                # --- OPTIX_SUPPRESS_ERRORS START --- (ändring) - slå av felmeddelanden under justeringsloopen
+
+                # tysta fel under interna solve-pass
                 self.controller.suppress_errors = True
-                # Initiera/behåll räknare för justeringsförsök per recept över körningar
-                n_rec = len(self.rec_['artnum'])
-                prev_attempts = getattr(self.controller, 'adjust_attempts', None)
-                if isinstance(prev_attempts, list):
-                    if len(prev_attempts) < n_rec:
-                        self.controller.adjust_attempts = prev_attempts + [0] * (n_rec - len(prev_attempts))
-                    elif len(prev_attempts) > n_rec:
-                        self.controller.adjust_attempts = prev_attempts[:n_rec]
-                    else:
-                        self.controller.adjust_attempts = prev_attempts
-                else:
-                    self.controller.adjust_attempts = [0] * n_rec
-                # --- OPTIX_SUPPRESS_ERRORS END ---
 
-                def _has_global_max0(art):
-                    for s in self.controller.text_list2.get(0, tk.END):
-                        if str(s).upper() == f"{art} MAX 0":
-                            return True
-                    return False
+                # initiera struktur för variance caps
+                self.controller.prob_caps = {}
 
-                def _remove_global_max0(art):
-                    # Tar bort exakt "ARTNUM MAX 0" från text_list2 (+spegling till text_list3 om den finns)
-                    to_remove = []
-                    for idx, s in enumerate(self.controller.text_list2.get(0, tk.END)):
-                        if str(s).upper() == f"{art} MAX 0":
-                            to_remove.append(idx)
-                    for idx in reversed(to_remove):
-                        self.controller.text_list2.delete(idx)
-                    if hasattr(self.controller, 'text_list3'):
-                        to_remove = []
-                        for idx, s in enumerate(self.controller.text_list3.get(0, tk.END)):
-                            if str(s).upper() == f"{art} MAX 0":
-                                to_remove.append(idx)
-                        for idx in reversed(to_remove):
-                            self.controller.text_list3.delete(idx)
-
-                def _add_global_max0(art):
-                    # Lägger tillbaka global spärr om nödvändigt (undvik duplicat)
-                    exists = any(str(s).upper() == f"{art} MAX 0" for s in self.controller.text_list2.get(0, tk.END))
-                    if not exists:
-                        self.controller.text_list2.insert(tk.END, f"{art} max 0")
-                    if hasattr(self.controller, 'text_list3'):
-                        exists3 = any(str(s).upper() == f"{art} MAX 0" for s in self.controller.text_list3.get(0, tk.END))
-                        if not exists3:
-                            self.controller.text_list3.insert(tk.END, f"{art} max 0")
-
-                def _add_local_min_rule(recipe_index, art, amount):
-                    # Lägg till lokal regel "ARTNUM MIN amount" om den inte redan finns
-                    if self.controller.lr_dict is None:
-                        self.controller.lr_dict = {}
-                    if recipe_index not in self.controller.lr_dict:
-                        self.controller.lr_dict[recipe_index] = []
-                    rule_str = f"{art} MIN {int(amount)}"
-                    if rule_str not in self.controller.lr_dict[recipe_index]:
-                        self.controller.lr_dict[recipe_index].append(rule_str)
-                        return True
-                    return False
-
-                def _remove_local_min_rule(recipe_index, art, amount):
-                    rule_str = f"{art} MIN {int(amount)}"
-                    if recipe_index in self.controller.lr_dict and rule_str in self.controller.lr_dict[recipe_index]:
-                        self.controller.lr_dict[recipe_index].remove(rule_str)
-
-                def _has_local_max_rule(recipe_index, art):
-                    if self.controller.lr_dict is None or recipe_index not in self.controller.lr_dict:
-                        return False
-                    for s in self.controller.lr_dict[recipe_index]:
-                        parts = s.strip().split()
-                        if len(parts) >= 2 and parts[0].upper() == str(art).upper() and parts[1].upper() == 'MAX':
-                            return True
-                    return False
-
-                def _add_local_max_rule(recipe_index, art, amount):
-                    if self.controller.lr_dict is None:
-                        self.controller.lr_dict = {}
-                    if recipe_index not in self.controller.lr_dict:
-                        self.controller.lr_dict[recipe_index] = []
-                    rule_str = f"{art} MAX {int(amount)}"
-                    if rule_str not in self.controller.lr_dict[recipe_index]:
-                        self.controller.lr_dict[recipe_index].append(rule_str)
-                        return True
-                    return False
-
-                def _remove_local_max_rule(recipe_index, art, amount):
-                    rule_str = f"{art} MAX {int(amount)}"
-                    if recipe_index in self.controller.lr_dict and rule_str in self.controller.lr_dict[recipe_index]:
-                        self.controller.lr_dict[recipe_index].remove(rule_str)
-
-                try:
-                    max_adjust_iters = int(self.controller.max_attempts_var.get())
-                except Exception:
-                    max_adjust_iters = 20
-                if max_adjust_iters < 1:
-                    max_adjust_iters = 1
-                elif max_adjust_iters > 1000:
-                    max_adjust_iters = 1000
-                for _ in range(max_adjust_iters):
-                    unmet = [ri for ri in range(len(self.rec_['artnum'])) if self.controller.succ_dict[ri][0] < target_prob]
-                    if not unmet:
-                        break
-                    pass_improved = False
-                    for ri in unmet:
-                        baseline = float(self.controller.succ_dict[ri][0])
-                        per_elem_prob = self.controller.succ_dict[ri][1]
-                        # välj sämsta element (exkl. 4,22)
-                        candidates_e = [(per_elem_prob[e], e) for e in range(24) if e not in (4, 22)]
-                        if not candidates_e:
+                # hjälpfunktion: bygg/uppdatera caps utifrån aktuell lösning
+                def _build_or_update_prob_caps(target):
+                    K = len([e for e in range(24) if e not in (4, 22)])
+                    p_e = target ** (1.0 / K)
+                    z = norm.ppf(p_e)
+                    changed = False
+                    for ri in range(len(self.rec_['artnum'])):
+                        total_prob = float(self.controller.succ_dict[ri][0])
+                        if total_prob >= target:
                             continue
-                        worst_e = min(candidates_e, key=lambda x: x[0])[1]
+                        w_out = float(self.controller.cp_dict['weight_out'][ri])
+                        alloy = self.controller.rec_['alloy'][ri]
+                        outer_max = self.controller.cp_dict['outer_max'][ri]
+                        caps_i = self.controller.prob_caps.get(ri, {})
+                        for e in range(24):
+                            if e in (4, 22):
+                                continue
+                            delta = float(outer_max[e] - alloy[e])
+                            if delta <= 0:
+                                rhs = 0.0
+                            else:
+                                rhs = w_out * (delta / z) ** 2
+                            prev = caps_i.get(e, None)
+                            if prev is None or abs(prev - rhs) > 1e-6:
+                                caps_i[e] = rhs
+                                changed = True
+                        if caps_i:
+                            self.controller.prob_caps[ri] = caps_i
+                    return changed
 
-                        # sortera artiklar på lägst std för worst_e och med positivt lager
-                        std_col = self.controller.all_test_std[:, worst_e]
-                        mean_col = self.set_mean_final[:, worst_e]
-                        margin = self.controller.cp_dict['outer_max'][ri][worst_e] - self.controller.rec_['alloy'][ri][worst_e]
-                        if margin < 0.5:
-                            order = np.lexsort((mean_col, std_col))
-                        else:
-                            order = np.argsort(std_col)
-                        # Tabu-baserad best-improvement: prova flera kandidater och mängder, välj bästa
-                        if not hasattr(self.controller, 'tabu_moves'):
-                            self.controller.tabu_moves = {}
-                        if ri not in self.controller.tabu_moves:
-                            self.controller.tabu_moves[ri] = set()
+                # iterationsloop
+                try:
+                    max_iters = int(self.controller.max_attempts_var.get())
+                except Exception:
+                    max_iters = 15
+                max_iters = max(1, min(1000, max_iters))
 
-                        tried_this_recipe = set()
-                        improved = False
-                        best_choice = None  # (prob, art, amount, remove_global)
-                        amounts = [50, 100, 150, 200]
-                        for ci in order[:min(50, len(order))]:
-                            if ci < 0 or ci >= len(self.set_artnum_inventory):
-                                continue
-                            art = str(self.set_artnum_inventory[ci])
-                            if art in tried_this_recipe:
-                                continue
-                            tried_this_recipe.add(art)
-                            avail = float(self.sum_quantity[ci]) if ci < len(self.sum_quantity) else 0.0
-                            if avail <= 0:
-                                continue
-                            for amt in amounts:
-                                add_amount = int(min(max(amt, 1), avail, 200))
-                                move_key = (art, add_amount, False)
-                                if move_key in self.controller.tabu_moves[ri]:
-                                    continue
-                                added_local = _add_local_min_rule(ri, art, add_amount)
-                                if not added_local:
-                                    continue
-                                # Lös om och utvärdera
-                                self.controller.adjust_attempts[ri] += 1
-                                self.prepare()
-                                setattr(self.controller, self.rec_key, self.rec_)
-                                self.controller.succ_dict = {}
-                                self.controller.cost_dict = {}
-                                for ii in range(len(self.rec_['artnum'])):
-                                    self.success_procent(index=ii)
-                                    self.cost_calculator(index=ii)
-                                self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
-                                cur = float(self.controller.succ_dict[ri][0])
-                                if cur > baseline and (best_choice is None or cur > best_choice[0]):
-                                    best_choice = (cur, art, add_amount, False)
-                                # revert lokalt
-                                _remove_local_min_rule(ri, art, add_amount)
-                                # prova variant med att temporärt ta bort global MAX 0
-                                if _has_global_max0(art):
-                                    move_key2 = (art, add_amount, True)
-                                    if move_key2 not in self.controller.tabu_moves[ri]:
-                                        _remove_global_max0(art)
-                                        _add_local_min_rule(ri, art, add_amount)
-                                        self.controller.adjust_attempts[ri] += 1
-                                        self.prepare()
-                                        setattr(self.controller, self.rec_key, self.rec_)
-                                        self.controller.succ_dict = {}
-                                        self.controller.cost_dict = {}
-                                        for ii in range(len(self.rec_['artnum'])):
-                                            self.success_procent(index=ii)
-                                            self.cost_calculator(index=ii)
-                                        self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
-                                        cur2 = float(self.controller.succ_dict[ri][0])
-                                        if cur2 > baseline and (best_choice is None or cur2 > best_choice[0]):
-                                            best_choice = (cur2, art, add_amount, True)
-                                        # revert båda ändringar
-                                        _remove_local_min_rule(ri, art, add_amount)
-                                        _add_global_max0(art)
-                        if best_choice is not None:
-                            # applicera bästa hittade ändring och markera i tabu
-                            _, art_b, amount_b, rem_glob = best_choice
-                            if rem_glob and _has_global_max0(art_b):
-                                _remove_global_max0(art_b)
-                            _add_local_min_rule(ri, art_b, amount_b)
-                            self.controller.tabu_moves[ri].add((art_b, amount_b, rem_glob))
-                            if len(self.controller.tabu_moves[ri]) > 200:
-                                # begränsa minnet
-                                self.controller.tabu_moves[ri] = set(list(self.controller.tabu_moves[ri])[-150:])
-                            # räkna om för att uppdatera succ/cost
-                            self.controller.adjust_attempts[ri] += 1
-                            self.prepare()
-                            setattr(self.controller, self.rec_key, self.rec_)
-                            self.controller.succ_dict = {}
-                            self.controller.cost_dict = {}
-                            for ii in range(len(self.rec_['artnum'])):
-                                self.success_procent(index=ii)
-                                self.cost_calculator(index=ii)
-                            self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
-                            improved = True
-                            pass_improved = True
-                            continue  # gå vidare till nästa recept
-                        # ingen förbättring hittades för detta recept i detta pass
-                        # improved förblir False
-                    # om ingen förbättring denna iteration, avbryt för att undvika loop
-                    if not pass_improved:
+                for _ in range(max_iters):
+                    # lös LP med aktuella caps
+                    self.prepare()
+                    setattr(self.controller, self.rec_key, self.rec_)
+                    self.controller.succ_dict = {}
+                    self.controller.cost_dict = {}
+                    for ii in range(len(self.rec_['artnum'])):
+                        self.success_procent(index=ii)
+                        self.cost_calculator(index=ii)
+                    self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
+
+                    # kontrollera mål
+                    if all(self.controller.succ_dict[ri][0] >= target_prob for ri in range(len(self.rec_['artnum']))):
                         break
 
-                # Kostnadsoptimering: försök sänka kostnad utan att gå under målnivån
-                cost_pass_max = 5
-                for ri in range(len(self.rec_['artnum'])):
-                    if self.controller.succ_dict.get(ri, (0,))[0] >= target_prob:
-                        for _ in range(cost_pass_max):
-                            p_used = np.where(self.controller.rec_['rec_result_x'][ri] != 0)[0]
-                            if p_used.size == 0:
-                                break
-                            costs_used = self.controller.rec_['cost'][p_used]
-                            idx_local = int(np.argmax(costs_used))
-                            idx_global = int(p_used[idx_local])
-                            art = str(self.controller.rec_['set_artnum_p'][idx_global])
-                            # hoppa om MAX-regel redan finns för artikeln (undvik komplex återställning)
-                            if _has_local_max_rule(ri, art):
-                                # prova nästa dyraste genom att maska bort denna
-                                costs_used[idx_local] = -1
-                                if np.max(costs_used) <= 0:
-                                    break
-                                continue
-                            cur_scrap = float(self.controller.rec_['rec_scrap_result_x'][ri][idx_global])
-                            if cur_scrap <= 1:
-                                break
-                            new_cap = int(max(0, np.floor(cur_scrap * 0.9)))
-                            added = _add_local_max_rule(ri, art, new_cap)
-                            if not added:
-                                break
-                            # Lös om med den nya MAX-regeln
-                            pre_cost = float(self.controller.cost_dict.get(ri, float('inf')))
-                            self.controller.adjust_attempts[ri] += 1
-                            self.prepare()
-                            setattr(self.controller, self.rec_key, self.rec_)
-                            self.controller.succ_dict = {}
-                            self.controller.cost_dict = {}
-                            for ii in range(len(self.rec_['artnum'])):
-                                self.success_procent(index=ii)
-                                self.cost_calculator(index=ii)
-                            self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
-                            cur_prob = float(self.controller.succ_dict[ri][0])
-                            new_cost = float(self.controller.cost_dict.get(ri, float('inf')))
-                            if cur_prob >= target_prob and new_cost <= pre_cost - 1:
-                                # behåll regeln och fortsätt nästa snävning
-                                continue
-                            else:
-                                # återställ ändringen
-                                _remove_local_max_rule(ri, art, new_cap)
-                                break
+                    # bygg/uppdatera caps från resultat
+                    if not _build_or_update_prob_caps(target_prob):
+                        # ingen förändring → konvergerat utan att nå mål
+                        break
 
-                # --- OPTIX_SUPPRESS_ERRORS START --- (ändring) - slå på felmeddelanden igen och summera utfallet
+                # Tuning-pass: försök undvika överleverans om kostnaden inte blir lägre
+                # Sikta mot att alla recept ligger i [target_prob, target_prob + band_width]
+                try:
+                    band_width = float(self.controller.band_width_var.get())/100.0
+                except Exception:
+                    band_width = 0.09
+                p_low = target_prob
+                p_high = min(0.999, target_prob + band_width)
+
+                # Hjälpfunktioner för caps
+                def _snapshot_caps():
+                    snap = {}
+                    for rix, caps_i in getattr(self.controller, 'prob_caps', {}).items():
+                        snap[rix] = dict(caps_i)
+                    return snap
+                def _restore_caps(snap):
+                    self.controller.prob_caps = {}
+                    for rix, caps_i in snap.items():
+                        self.controller.prob_caps[rix] = dict(caps_i)
+                def _scale_prob_caps(factor):
+                    if not hasattr(self.controller, 'prob_caps'):
+                        return
+                    for rix, caps_i in self.controller.prob_caps.items():
+                        for e in list(caps_i.keys()):
+                            if e in (4, 22):
+                                continue
+                            caps_i[e] *= factor
+
+                # Gör tuning endast om alla recept når p_low
+                all_ok = all(self.controller.succ_dict[ri][0] >= p_low for ri in range(len(self.rec_['artnum'])))
+                if all_ok:
+                    # Spara bästa
+                    best_caps = _snapshot_caps()
+                    best_cost_sum = float(self.controller.cost_dict['cost_sum']) if 'cost_sum' in self.controller.cost_dict else float('inf')
+                    gamma = 1.05
+                    max_tune_iters = 10
+                    tol_cost = 1e-3
+
+                    for _ in range(max_tune_iters):
+                        # relaxera caps
+                        _scale_prob_caps(gamma)
+                        # lös om
+                        self.prepare()
+                        setattr(self.controller, self.rec_key, self.rec_)
+                        self.controller.succ_dict = {}
+                        self.controller.cost_dict = {}
+                        for ii in range(len(self.rec_['artnum'])):
+                            self.success_procent(index=ii)
+                            self.cost_calculator(index=ii)
+                        cost_sum = float(self.controller.cost_dict['cost_sum']) if 'cost_sum' in self.controller.cost_dict else float('inf')
+
+                        probs = [float(self.controller.succ_dict[i][0]) for i in range(len(self.rec_['artnum']))]
+                        all_above_low = all(p >= p_low for p in probs)
+                        all_below_high = all(p <= p_high for p in probs)
+
+                        if not all_above_low:
+                            # tappade mål: återställ bästa och avbryt
+                            _restore_caps(best_caps)
+                            break
+
+                        # om kostnaden minskar eller sannolikheten kommer inom band -> behåll
+                        if cost_sum <= best_cost_sum - tol_cost or all_below_high:
+                            best_caps = _snapshot_caps()
+                            best_cost_sum = cost_sum
+                            if all_below_high:
+                                break
+                        else:
+                            # ingen förbättring: återställ bästa och sluta
+                            _restore_caps(best_caps)
+                            break
+
+                    # Lös en sista gång med bästa caps
+                    self.prepare()
+                    setattr(self.controller, self.rec_key, self.rec_)
+                    self.controller.succ_dict = {}
+                    self.controller.cost_dict = {}
+                    for ii in range(len(self.rec_['artnum'])):
+                        self.success_procent(index=ii)
+                        self.cost_calculator(index=ii)
+
+                # slå på fel och rapportera kvarvarande recept
                 self.controller.suppress_errors = False
                 remaining = [ri for ri in range(len(self.rec_['artnum'])) if self.controller.succ_dict[ri][0] < target_prob]
                 if remaining:
                     messagebox.showerror('Mål ej uppnått', f'Kunde inte nå målnivån för index: {", ".join(map(str, remaining))}.')
-                # --- OPTIX_SUPPRESS_ERRORS END ---
-                # --- OPTIX_RULE_ADJUST END ---
+                # --- OPTIX_PROB_CAPS END ---
 
 class Window2(tk.Frame):
     def __init__(self, parent, controller):
@@ -1305,6 +1204,11 @@ class Window2(tk.Frame):
         controller.max_attempts_var = tk.StringVar(value='20')
         tk.Label(self, text='Max försök', font=tkFont.Font(size=12)).grid(row=2, column=1, sticky='sw', padx=5, pady=5)
         tk.Entry(self, textvariable=controller.max_attempts_var, width=5, font=tkFont.Font(size=12)).grid(row=2, column=1, sticky='se', padx=5, pady=(0,5))
+
+        # Bandbredd för målprocent (t.ex. 9% -> 70–79%)
+        controller.band_width_var = tk.StringVar(value='9')
+        tk.Label(self, text='Bandbredd %', font=tkFont.Font(size=12)).grid(row=2, column=2, sticky='sw', padx=5, pady=5)
+        tk.Entry(self, textvariable=controller.band_width_var, width=5, font=tkFont.Font(size=12)).grid(row=2, column=2, sticky='se', padx=5, pady=(0,5))
         # --- OPTIX_TARGET_DEFAULT END ---
 
 class GoBack1(tk.Frame):
