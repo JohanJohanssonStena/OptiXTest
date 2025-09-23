@@ -23,7 +23,7 @@ def main():
 class Application(tk.Tk): 
     def __init__(self):
         super().__init__()
-        self.title('OptiX')
+        self.title('OptiX 1.1.2')
         self.geometry("1380x800")
 
         if getattr(sys, 'frozen', False):
@@ -39,6 +39,15 @@ class Application(tk.Tk):
 
         self.container = tk.Frame(self)
         self.container.pack(fill="both", expand=True)
+
+        # Initiera optimeringsinställningar tidigt så de kan användas i alla sidor
+        self.target_pct_var = tk.StringVar(value='70')
+        self.max_attempts_var = tk.StringVar(value='20')
+        self.band_width_var = tk.StringVar(value='9')
+        self.lambda_u_var = tk.StringVar(value='1.0')
+        self.lambda_v_var = tk.StringVar(value='1000000')
+        self.use_socp_var = tk.BooleanVar(value=False)
+        self.socp_solver_var = tk.StringVar(value='ECOS')
 
         self.page1 = Window1(self.container, self)
         self.page2 = Window2(self.container, self)
@@ -63,6 +72,9 @@ class Window1(tk.Frame):
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
         self.columnconfigure(2, weight=1)
+        # Kugghjul i fönster 1 för att kunna justera innan start
+        self.settings_btn = tk.Button(self, text='⚙', font=tkFont.Font(size=12), command=self.open_settings)
+        self.settings_btn.place(x=5, y=5)
         self.rowconfigure(0, weight=1, uniform='group1')
         self.rowconfigure(1, weight=1, uniform='group1')
         self.rowconfigure(2, weight=1, uniform='group1')
@@ -96,6 +108,59 @@ class Window1(tk.Frame):
         controller.df3 = frame_choosefile3.df
 
         controller.rec_ = frame_start.rec_
+
+    def open_settings(self):
+        win = tk.Toplevel(self)
+        win.title('Inställningar')
+        win.transient(self.winfo_toplevel())
+        win.grab_set()
+        win.resizable(True, True)
+        win.geometry('900x700')
+        win.minsize(900, 700)
+        pad = {'padx': 12, 'pady': 8}
+
+        # Sektion: Sannolikhet
+        prob_frame = tk.LabelFrame(win, text='Sannolikhet', font=tkFont.Font(size=11))
+        prob_frame.grid(row=0, column=0, sticky='nsew', **pad)
+        tk.Label(prob_frame, text='Målvärde %').grid(row=0, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(row=0, column=1, sticky='e', padx=6, pady=4)
+        tk.Label(prob_frame, text='Bandbredd %').grid(row=1, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(row=1, column=1, sticky='e', padx=6, pady=4)
+        tk.Label(prob_frame, text='Max försök').grid(row=2, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(prob_frame, textvariable=self.controller.max_attempts_var, width=8).grid(row=2, column=1, sticky='e', padx=6, pady=4)
+
+        # Sektion: Optimering
+        opt_frame = tk.LabelFrame(win, text='Optimering', font=tkFont.Font(size=11))
+        opt_frame.grid(row=1, column=0, sticky='nsew', **pad)
+        tk.Checkbutton(opt_frame, text='Optimera med SOCP', variable=self.controller.use_socp_var).grid(row=0, column=0, columnspan=2, sticky='w', padx=6, pady=4)
+        tk.Label(opt_frame, text='Lösare').grid(row=1, column=0, sticky='w', padx=6, pady=4)
+        solver_menu = tk.OptionMenu(opt_frame, self.controller.socp_solver_var, 'ECOS', 'SCS', 'MOSEK')
+        solver_menu.grid(row=1, column=1, sticky='e', padx=6, pady=4)
+
+        # Sektion: Slackvikter (Alternativ B)
+        slack_frame = tk.LabelFrame(win, text='Slackvikter (Alternativ B)', font=tkFont.Font(size=11))
+        slack_frame.grid(row=2, column=0, sticky='nsew', **pad)
+        tk.Label(slack_frame, text='Lambda u').grid(row=0, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(row=0, column=1, sticky='e', padx=6, pady=4)
+        tk.Label(slack_frame, text='Lambda v').grid(row=1, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(row=1, column=1, sticky='e', padx=6, pady=4)
+
+        # Knappar
+        btn_frame = tk.Frame(win)
+        btn_frame.grid(row=3, column=0, sticky='e', **pad)
+        def reset_defaults():
+            self.controller.target_pct_var.set('70')
+            self.controller.band_width_var.set('9')
+            self.controller.max_attempts_var.set('20')
+            self.controller.lambda_u_var.set('1.0')
+            self.controller.lambda_v_var.set('1000000')
+            self.controller.use_socp_var.set(False)
+            self.controller.socp_solver_var.set('ECOS')
+        def apply_and_close():
+            win.destroy()
+        tk.Button(btn_frame, text='Återställ', command=reset_defaults).grid(row=0, column=0, padx=5)
+        tk.Button(btn_frame, text='Stäng', command=win.destroy).grid(row=0, column=1, padx=5)
+        tk.Button(btn_frame, text='Verkställ', command=apply_and_close).grid(row=0, column=2, padx=5)
 
 class InputForm(tk.Frame):
     def __init__(self, parent, controller, mode):
@@ -781,12 +846,9 @@ class Start(tk.Frame):
         A_add_on_i = [self.A_add_on.copy() for _ in range(n)]
         for i in range(n):
             A_add_on_i[i][:, rule_override[i]] = 0
-        #sätter max lager för flera recept
-        inventory_A_addon = np.empty((len(self.set_artnum_p), 0))
-        inventory_A_add = np.eye(len(self.set_artnum_p))
+        #sätter max lager för flera recept (bygg A senare när vi vet antal slackvariabler per recept)
         inventory_b_addon = self.sum_quantity.copy()
-        for i in range(n):
-            inventory_A_addon = np.hstack((inventory_A_addon, inventory_A_add))
+        M_sizes = [0] * n
     
         selected_test_std = [np.empty((0,len(self.set_artnum_p))) for _ in range(n)]
         selected_test_std_value = [np.empty(0) for _ in range(n)]
@@ -796,6 +858,16 @@ class Start(tk.Frame):
                 selected_test_std_value[i] = np.hstack((selected_test_std_value[i], np.power(choose_std_value[i][j]*100/2, 2) * self.controller.cp_dict['weight_out'][i]))
 
                 
+        # Läs vikter för slack-variabler (Alternativ B)
+        try:
+            lambda_u = float(self.controller.lambda_u_var.get())
+        except Exception:
+            lambda_u = 1.0
+        try:
+            lambda_v = float(self.controller.lambda_v_var.get())
+        except Exception:
+            lambda_v = 1e6
+
         for i in range(0,n): #bygger listor med ett recept per position
             # Sannolikhets-variance-caps per recept (exkl. 4 och 22)
             A_probcap_i = np.empty((0, len(self.set_artnum_p)))
@@ -814,19 +886,21 @@ class Start(tk.Frame):
             A[i] = np.vstack((A[i], A_add_on_i[i]/self.set_exchange))
             A[i] = np.vstack((A[i], mr_A_add_on/self.set_exchange))
             A[i] = np.vstack((A[i], lmr_A_add_on[i]/self.set_exchange))
-            # injicera sannolikhets-caps
-            if A_probcap_i.size > 0:
-                A[i] = np.vstack((A[i], A_probcap_i))
-            A[i] = np.vstack((A[i], max_amount_A))
+            # Alternativ B: använd cap-equalities med slack u/v (lägger till kolumner senare i Aeq)
+            Mi = A_probcap_i.shape[0]
+            M_sizes[i] = Mi
+            if Mi > 0:
+                A[i] = np.hstack((A[i], np.zeros((A[i].shape[0], 2*Mi))))
+                max_amount_ext = np.hstack((max_amount_A, np.zeros((max_amount_A.shape[0], 2*Mi))))
+            else:
+                max_amount_ext = max_amount_A
+            A[i] = np.vstack((A[i], max_amount_ext))
             b[i] = self.controller.cp_dict['tol_max'][i] * self.controller.cp_dict['weight_out'][i]
             b[i] = np.hstack((b[i], self.controller.cp_dict['tol_min'][i] *(-1) * self.controller.cp_dict['weight_out'][i]))
             b[i] = np.hstack((b[i], selected_test_std_value[i]))
             b[i] = np.hstack((b[i], self.b_add_on))
             b[i] = np.hstack((b[i], mr_b_add_on))
             b[i] = np.hstack((b[i], lmr_b_add_on[i]))
-            # injicera b-led för sannolikhets-caps
-            if b_probcap_i.size > 0:
-                b[i] = np.hstack((b[i], b_probcap_i))
             b[i] = np.hstack((b[i], np.array([self.controller.cp_dict['weight_in'][i]])))
             Aeq[i] = np.ones((1, (len(self.set_artnum_p))))
             Aeq[i] = np.vstack((Aeq[i], mr_Aeq_add_on/self.set_exchange))
@@ -834,8 +908,22 @@ class Start(tk.Frame):
             beq[i] = np.array([self.controller.cp_dict['weight_out'][i]])
             beq[i] = np.hstack((beq[i], mr_beq_add_on))
             beq[i] = np.hstack((beq[i], lmr_beq_add_on[i]))
-            f[i] = modified_cost[i]
-            bound[i] = [(0, None)] * len(self.set_mean_final)
+            # Alternativ B: lägg till cap-equalities i Aeq och vikta u/v i målfunktionen
+            if M_sizes[i] > 0:
+                Mi = M_sizes[i]
+                # utöka befintliga eq-rader med nollor för u/v-kolumner
+                Aeq[i] = np.hstack((Aeq[i], np.zeros((Aeq[i].shape[0], 2*Mi))))
+                # lägg till cap-equalities: [A_probcap_i | I | -I]
+                cap_eq = np.hstack((A_probcap_i, np.eye(Mi), -np.eye(Mi)))
+                Aeq[i] = np.vstack((Aeq[i], cap_eq))
+                beq[i] = np.hstack((beq[i], b_probcap_i))
+                # målfunktion: kostnad(x) + lambda_u*sum(u) + lambda_v*sum(v)
+                f[i] = np.hstack((modified_cost[i], np.full(Mi, lambda_u), np.full(Mi, lambda_v)))
+                # bounds för x, u, v
+                bound[i] = [(0, None)] * len(self.set_mean_final) + [(0, None)] * (2*Mi)
+            else:
+                f[i] = modified_cost[i]
+                bound[i] = [(0, None)] * len(self.set_mean_final)
         
         #utformar arrayerna för linprog
         A_ub = block_diag(*A)
@@ -844,7 +932,16 @@ class Start(tk.Frame):
         b_eq = np.concatenate(beq)
         func = np.concatenate(f)
         bounds = np.concatenate(bound)
-        A_ub = np.vstack((A_ub, inventory_A_addon))
+        # Bygg inventory-matris med hänsyn till slack-kolumner per recept
+        inv_rows = len(self.set_artnum_p)
+        inventory_A_add = np.eye(inv_rows)
+        inventory_A_addon2 = np.empty((inv_rows, 0))
+        for i in range(n):
+            Mi = M_sizes[i]
+            extra = np.zeros((inv_rows, 2*Mi))
+            block = np.hstack((inventory_A_add, extra))
+            inventory_A_addon2 = np.hstack((inventory_A_addon2, block))
+        A_ub = np.vstack((A_ub, inventory_A_addon2))
         b_ub = np.concatenate((b_ub, inventory_b_addon))
 
         #skapar exceldokument för felsökning
@@ -861,7 +958,9 @@ class Start(tk.Frame):
         if not self.controller.success_bool:
             result_bol = np.zeros(n, dtype=bool)  
             for i in range(0,n): #bygger listor med ett recept per position
-                result_test = linprog(f[i], A_ub=np.vstack((A[i], inventory_A_add)), b_ub=np.concatenate((b[i], inventory_b_addon)), A_eq=Aeq[i], b_eq=beq[i], bounds=bound[i])
+                Mi = M_sizes[i]
+                inv_block_i = np.hstack((np.eye(len(self.set_artnum_p)), np.zeros((len(self.set_artnum_p), 2*Mi))))
+                result_test = linprog(f[i], A_ub=np.vstack((A[i], inv_block_i)), b_ub=np.concatenate((b[i], inventory_b_addon)), A_eq=Aeq[i], b_eq=beq[i], bounds=bound[i])
                 result_bol[i] = result_test.success
             non_possible = np.array(list(range(n)))[~result_bol]
             # --- OPTIX_SUPPRESS_ERRORS START --- (ändring) - visa inte fel vid interna justeringsförsök
@@ -882,14 +981,23 @@ class Start(tk.Frame):
             rec_scrap_result_x = [None] * n
             rec_description = [None] * n
 
+            # beräkna startindex för varje recept-block i lösningsvektorn
+            block_starts = []
+            cur = 0
+            for i2 in range(n):
+                block_starts.append(cur)
+                cur += len(self.set_artnum_p) + 2*M_sizes[i2]
             for i in range(0,n):
-                p = np.where(result.x[i*len(self.set_artnum_p):(i+1)*len(self.set_artnum_p)] != 0)
+                start = block_starts[i]
+                end = start + len(self.set_artnum_p)
+                xi = result.x[start:end]
+                p = np.where(xi != 0)
                 rec_artnum[i] = self.set_artnum_p[p]
                 rec_description[i] = self.set_description[p]
-                rec_amount[i] = (result.x[i*len(self.set_artnum_p):(i+1)*len(self.set_artnum_p)])[p]
-                rec_scrap_amount[i] = (result.x[i*len(self.set_artnum_p):(i+1)*len(self.set_artnum_p)]/self.set_exchange)[p]
-                rec_scrap_result_x[i] = result.x[i*len(self.set_artnum_p):(i+1)*len(self.set_artnum_p)]/self.set_exchange 
-                rec_result_x[i] = result.x[i*len(self.set_artnum_p):(i+1)*len(self.set_artnum_p)]
+                rec_amount[i] = xi[p]
+                rec_scrap_amount[i] = (xi/self.set_exchange)[p]
+                rec_scrap_result_x[i] = xi/self.set_exchange 
+                rec_result_x[i] = xi
 
                 rec_alloy[i] = np.sum(np.atleast_2d(np.squeeze(self.set_mean_final[p,:] * rec_amount[i][:, np.newaxis])), axis=0) / self.controller.cp_dict['weight_out'][i]
                 
@@ -908,27 +1016,30 @@ class Start(tk.Frame):
             self.first_run = False
 
     def success_procent(self, index):
+        # std enligt SOCP-modell: sqrt(sum_j (sigma^2 * (x/W)^2))
         p = np.where(self.controller.rec_['rec_result_x'][index] != 0)
         test_std = self.controller.all_test_std[p, :][0]
         rec_result = self.controller.rec_['rec_result_x'][index][p]
+        W = self.controller.cp_dict['weight_out'][index]
 
-        sum_weighted_std = rec_result[:, np.newaxis]*np.power(test_std[:], 2)/self.controller.cp_dict['weight_out'][index]
-        sum_weighted_std = np.sqrt(np.sum(sum_weighted_std, axis=0))
-        weighted_std = rec_result[:, np.newaxis]*test_std[:]/self.controller.cp_dict['weight_out'][index]
+        ratio = (rec_result[:, np.newaxis] / W)
+        var_e = np.sum((ratio ** 2) * (test_std ** 2), axis=0)
+        sum_weighted_std = np.sqrt(var_e)
 
-        p = np.where(np.all(test_std == 0, axis=1))[0]
+        # bidragsvärden för UI-rekommendationer: (x/W)*sigma per komponent/element
+        contrib = ratio * test_std  # shape: (#used, 24)
 
+        p0 = np.where(np.all(test_std == 0, axis=1))[0]
         alloy = self.controller.rec_['alloy'][index].copy()
-        amount = rec_result[p]/self.controller.cp_dict['weight_out'][index]
-        an = self.controller.rec_['artnum'][index][p]
-
+        amount = rec_result[p0] / W if p0.size > 0 else np.array([])
+        an = self.controller.rec_['artnum'][index][p0] if p0.size > 0 else np.array([])
         for i in range(len(an)):
             p2 = np.where(an[i] == self.controller.testing_dict['set_artnum_p'])[0]
-            alloy -= ((self.controller.testing_dict['set_mean_final'][p2,:])*amount[i]).reshape(24,)
+            alloy -= ((self.controller.testing_dict['set_mean_final'][p2,:]) * amount[i]).reshape(24,)
 
         prob = norm.cdf(self.controller.cp_dict['outer_max'][index][0:23], loc=alloy[0:23], scale=sum_weighted_std[0:23])
-        prob = np.append(prob, np.float64(1.0)) #Hg
-        self.controller.succ_dict[index] = (np.prod(np.delete(np.array(prob), [4, 22])), prob, weighted_std)
+        prob = np.append(prob, np.float64(1.0))
+        self.controller.succ_dict[index] = (np.prod(np.delete(np.array(prob), [4, 22])), prob, contrib)
 
     def cost_calculator(self, index):
         p = np.where(self.controller.rec_['rec_result_x'][index] != 0)[0]
@@ -936,6 +1047,205 @@ class Start(tk.Frame):
         self.controller.cost_dict[f"{index}/kg"] = np.sum(self.controller.rec_['cost'][p] * self.controller.rec_['rec_result_x'][index][p])/self.controller.cp_dict['weight_out'][index]
 
     
+    def socp_optimize(self):
+        # Enkel progress-indikator (notera: synkron lösning kan blockera animation)
+        prog = tk.Toplevel(self)
+        prog.title('Optimerar (SOCP)')
+        tk.Label(prog, text='Arbetar...').pack(padx=10, pady=5)
+        bar = ttk.Progressbar(prog, mode='indeterminate', length=240)
+        bar.pack(padx=10, pady=(0,10))
+        bar.start(10)
+        prog.update_idletasks()
+
+        # cvxpy krävs
+        if cp is None:
+            bar.stop()
+            prog.destroy()
+            messagebox.showerror('SOCP saknas', 'cvxpy kunde inte importeras. Installera cvxpy och en lösare (t.ex. ECOS) för att använda SOCP-läget.')
+            raise RuntimeError('cvxpy not available')
+
+        # Data
+        n = len(self.controller.text_list1.get(0, tk.END))
+        m = len(self.set_artnum_p)
+        cost_base = self.set_cost.copy()
+        W = [float(self.controller.cp_dict['weight_out'][i]) for i in range(n)]
+        tol_max = self.controller.cp_dict['tol_max']
+        tol_min = self.controller.cp_dict['tol_min']
+        outer_max = self.controller.cp_dict['outer_max']
+        mu_all = self.set_mean_final  # (m,24)
+        sigma_all = self.controller.all_test_std  # (m,24)
+
+        # Solver-val
+        solver_name = getattr(self.controller, 'socp_solver_var', None).get() if hasattr(self.controller, 'socp_solver_var') else 'ECOS'
+        solver_map = {'ECOS': cp.ECOS, 'SCS': cp.SCS}
+        solver = solver_map.get(solver_name, cp.ECOS)
+        if solver_name == 'MOSEK':
+            try:
+                solver = cp.MOSEK
+            except Exception:
+                solver = cp.ECOS
+
+        # z från target
+        try:
+            target_prob = float(self.controller.target_pct_var.get())/100.0
+        except Exception:
+            target_prob = 0.70
+        K = len([e for e in range(24) if e not in (4, 22)])
+        p_e = target_prob ** (1.0 / K)
+        z = norm.ppf(p_e)
+
+        # Variabler
+        x_vars = [cp.Variable(m, nonneg=True) for _ in range(n)]
+        constraints = []
+        obj_terms = []
+
+        # Globala regler
+        global_cost_zero_idx = set()
+        global_limits = []  # (typ, j, val)
+        manual_rule = list(self.controller.text_list2.get(0, tk.END)) if hasattr(self.controller, 'text_list2') else []
+        for s in manual_rule:
+            parts = s.strip().split()
+            if len(parts) < 2:
+                continue
+            art = parts[0].upper()
+            cmd = parts[1].upper()
+            amt = float(parts[2].replace(',', '.')) if len(parts) > 2 else 0.0
+            idx = np.where(self.set_artnum_p == art)[0]
+            if idx.size == 0 and art.endswith('P'):
+                idx = np.where(self.set_artnum_p.astype('U16') == art)[0]
+            if idx.size == 0:
+                continue
+            j = int(idx[0])
+            if cmd == 'COST0':
+                global_cost_zero_idx.add(j)
+            elif cmd in ('MAX','MIN','='):
+                val = amt * float(self.set_exchange[j])
+                if cmd == 'MAX':
+                    global_limits.append(('<=', j, val))
+                elif cmd == 'MIN':
+                    global_limits.append(('>=', j, val))
+                else:
+                    global_limits.append(('==', j, val))
+
+        # Inventory
+        for j in range(m):
+            constraints.append(cp.sum([x_vars[i][j] for i in range(n)]) <= float(self.sum_quantity[j]))
+
+        # Per recept
+        for i in range(n):
+            x = x_vars[i]
+            # Viktbalans
+            constraints.append(cp.sum(x) == W[i])
+            # Toleranser
+            for e in range(24):
+                mu = mu_all[:, e]
+                if np.isfinite(tol_max[i][e]):
+                    constraints.append(mu @ x <= W[i] * float(tol_max[i][e]))
+                if np.isfinite(tol_min[i][e]):
+                    constraints.append(mu @ x >= W[i] * float(tol_min[i][e]))
+            # SOCP på outer_max
+            for e in range(24):
+                if e in (4, 22):
+                    continue
+                mu = mu_all[:, e]
+                sigma = sigma_all[:, e]
+                constraints.append(mu @ x + z * cp.norm(cp.multiply(sigma, x), 2) <= W[i] * float(outer_max[i][e]))
+            # Globala gränser
+            for typ, j, val in global_limits:
+                if typ == '<=':
+                    constraints.append(x[j] <= val)
+                elif typ == '>=':
+                    constraints.append(x[j] >= val)
+                else:
+                    constraints.append(x[j] == val)
+            # Lokala regler
+            local_rules = self.controller.lr_dict.get(i, []) if hasattr(self.controller, 'lr_dict') and isinstance(self.controller.lr_dict, dict) else []
+            local_cost_zero_idx = set()
+            local_limits = []
+            for s in local_rules:
+                parts = s.strip().split()
+                if len(parts) < 2:
+                    continue
+                art = parts[0].upper()
+                cmd = parts[1].upper()
+                amt = float(parts[2].replace(',', '.')) if len(parts) > 2 else 0.0
+                idx = np.where(self.set_artnum_p == art)[0]
+                if idx.size == 0 and art.endswith('P'):
+                    idx = np.where(self.set_artnum_p.astype('U16') == art)[0]
+                if idx.size == 0:
+                    continue
+                j = int(idx[0])
+                if cmd == 'COST0':
+                    local_cost_zero_idx.add(j)
+                elif cmd in ('MAX','MIN','='):
+                    val = amt * float(self.set_exchange[j])
+                    if cmd == 'MAX':
+                        local_limits.append(('<=', j, val))
+                    elif cmd == 'MIN':
+                        local_limits.append(('>=', j, val))
+                    else:
+                        local_limits.append(('==', j, val))
+            for typ, j, val in local_limits:
+                if typ == '<=':
+                    constraints.append(x[j] <= val)
+                elif typ == '>=':
+                    constraints.append(x[j] >= val)
+                else:
+                    constraints.append(x[j] == val)
+            # Kostnad
+            cost_vec = cost_base.copy()
+            if global_cost_zero_idx:
+                cost_vec[list(global_cost_zero_idx)] = 0.0
+            if local_cost_zero_idx:
+                cost_vec[list(local_cost_zero_idx)] = 0.0
+            obj_terms.append(cost_vec @ x)
+
+        problem = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
+        try:
+            problem.solve(solver=solver, verbose=False)
+        except Exception as err:
+            bar.stop()
+            prog.destroy()
+            messagebox.showerror('SOCP-fel', f'Kunde inte lösa SOCP: {err}')
+            raise
+        bar.stop()
+        prog.destroy()
+        if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
+            messagebox.showerror('SOCP-fel', f'Lösaren returnerade status: {problem.status}')
+            raise RuntimeError('SOCP not optimal')
+
+        # Skriv tillbaka resultat
+        n = len(x_vars)
+        rec_artnum = [None] * n
+        rec_amount = [None] * n
+        rec_scrap_amount = [None] * n
+        rec_alloy = [None] * n
+        rec_result_x = [None] * n
+        rec_scrap_result_x = [None] * n
+        rec_description = [None] * n
+        for i in range(n):
+            xi = np.array(x_vars[i].value).reshape(-1)
+            p_idx = np.where(xi != 0)[0]
+            rec_artnum[i] = self.set_artnum_p[p_idx]
+            rec_description[i] = self.set_description[p_idx]
+            rec_amount[i] = xi[p_idx]
+            rec_scrap_amount[i] = (xi / self.set_exchange)[p_idx]
+            rec_scrap_result_x[i] = xi / self.set_exchange
+            rec_result_x[i] = xi
+            rec_alloy[i] = np.sum(np.atleast_2d(self.set_mean_final[p_idx, :] * rec_amount[i][:, np.newaxis]), axis=0) / W[i]
+
+        self.rec_['n'] = n
+        self.rec_['artnum'] = rec_artnum
+        self.rec_['amount'] = rec_amount
+        self.rec_['scrap_amount'] = rec_scrap_amount
+        self.rec_['alloy'] = rec_alloy
+        self.rec_['rec_scrap_result_x'] = rec_scrap_result_x
+        self.rec_['rec_result_x'] = rec_result_x
+        self.rec_['cost'] = self.set_cost
+        self.rec_['set_description'] = self.set_description
+        self.rec_['set_artnum_p'] = self.set_artnum_p
+        self.rec_['rec_description'] = rec_description
+
     def start_combined(self, _event=None):
         if not (self.controller.df1.empty or self.controller.df2.empty or self.controller.df1.dropna(how='all').empty or self.controller.df2.dropna(how='all').empty):
             if self.controller.checkbox_var.get() and self.mode == 'start':
@@ -1000,8 +1310,18 @@ class Start(tk.Frame):
                 self.read_rules()
                 self.read_inventory()
                 self.compare()
-                self.prepare()
-                setattr(self.controller, self.rec_key, self.rec_)
+
+                # SOCP-läge: global konvex optimering
+                if hasattr(self.controller, 'use_socp_var') and self.controller.use_socp_var.get():
+                    try:
+                        self.socp_optimize()
+                    except Exception:
+                        return
+                    setattr(self.controller, self.rec_key, self.rec_)
+                else:
+                    # Legacy-LP
+                    self.prepare()
+                    setattr(self.controller, self.rec_key, self.rec_)
 
                 self.controller.succ_dict = {}
                 self.controller.cost_dict = {}
@@ -1194,29 +1514,76 @@ class Window2(tk.Frame):
 
         controller.text_list3 = frame_listbox3.text_list
 
-        # --- OPTIX_TARGET_DEFAULT START --- (ändring) - UI för standardmålvärde (70%) som kan justeras
-        # Målnivå i procent (används vid Start/Återskapa)
-        controller.target_pct_var = tk.StringVar(value='70')
-        tk.Label(self, text='Målvärde %', font=tkFont.Font(size=12)).grid(row=2, column=0, sticky='sw', padx=5, pady=5)
-        tk.Entry(self, textvariable=controller.target_pct_var, width=5, font=tkFont.Font(size=12)).grid(row=2, column=0, sticky='se', padx=5, pady=(0,5))
-
-        # Max antal försök för justeringsloop
-        controller.max_attempts_var = tk.StringVar(value='20')
-        tk.Label(self, text='Max försök', font=tkFont.Font(size=12)).grid(row=2, column=1, sticky='sw', padx=5, pady=5)
-        tk.Entry(self, textvariable=controller.max_attempts_var, width=5, font=tkFont.Font(size=12)).grid(row=2, column=1, sticky='se', padx=5, pady=(0,5))
-
-        # Bandbredd för målprocent (t.ex. 9% -> 70–79%)
-        controller.band_width_var = tk.StringVar(value='9')
-        tk.Label(self, text='Bandbredd %', font=tkFont.Font(size=12)).grid(row=2, column=2, sticky='sw', padx=5, pady=5)
-        tk.Entry(self, textvariable=controller.band_width_var, width=5, font=tkFont.Font(size=12)).grid(row=2, column=2, sticky='se', padx=5, pady=(0,5))
+        # --- OPTIX_TARGET_DEFAULT START --- (ändring) - Inställningsdialog istället för inline-fält
+        # Använder variabler från controller (initierade i Application)
+        # Kugghjulsknappen ligger i GoBack1; ingen extra knapp här
         # --- OPTIX_TARGET_DEFAULT END ---
+
+    def open_settings(self):
+        win = tk.Toplevel(self)
+        win.title('Inställningar')
+        win.transient(self.winfo_toplevel())
+        win.grab_set()
+        win.resizable(True, True)
+        win.geometry('900x700')
+        win.minsize(900, 700)
+        pad = {'padx': 12, 'pady': 8}
+
+        # Sektion: Sannolikhet
+        prob_frame = tk.LabelFrame(win, text='Sannolikhet', font=tkFont.Font(size=11))
+        prob_frame.grid(row=0, column=0, sticky='nsew', **pad)
+        tk.Label(prob_frame, text='Målvärde %').grid(row=0, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(row=0, column=1, sticky='e', padx=6, pady=4)
+        tk.Label(prob_frame, text='Bandbredd %').grid(row=1, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(row=1, column=1, sticky='e', padx=6, pady=4)
+        tk.Label(prob_frame, text='Max försök').grid(row=2, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(prob_frame, textvariable=self.controller.max_attempts_var, width=8).grid(row=2, column=1, sticky='e', padx=6, pady=4)
+
+        # Sektion: Optimering
+        opt_frame = tk.LabelFrame(win, text='Optimering', font=tkFont.Font(size=11))
+        opt_frame.grid(row=1, column=0, sticky='nsew', **pad)
+        tk.Checkbutton(opt_frame, text='Optimera med SOCP', variable=self.controller.use_socp_var).grid(row=0, column=0, columnspan=2, sticky='w', padx=6, pady=4)
+        tk.Label(opt_frame, text='Lösare').grid(row=1, column=0, sticky='w', padx=6, pady=4)
+        solver_menu = tk.OptionMenu(opt_frame, self.controller.socp_solver_var, 'ECOS', 'SCS', 'MOSEK')
+        solver_menu.grid(row=1, column=1, sticky='e', padx=6, pady=4)
+
+        # Sektion: Slackvikter (Alternativ B)
+        slack_frame = tk.LabelFrame(win, text='Slackvikter (Alternativ B)', font=tkFont.Font(size=11))
+        slack_frame.grid(row=2, column=0, sticky='nsew', **pad)
+        tk.Label(slack_frame, text='Lambda u').grid(row=0, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(row=0, column=1, sticky='e', padx=6, pady=4)
+        tk.Label(slack_frame, text='Lambda v').grid(row=1, column=0, sticky='w', padx=6, pady=4)
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(row=1, column=1, sticky='e', padx=6, pady=4)
+
+        # Knappar
+        btn_frame = tk.Frame(win)
+        btn_frame.grid(row=3, column=0, sticky='e', **pad)
+        def reset_defaults():
+            self.controller.target_pct_var.set('70')
+            self.controller.band_width_var.set('9')
+            self.controller.max_attempts_var.set('20')
+            self.controller.lambda_u_var.set('1.0')
+            self.controller.lambda_v_var.set('1000000')
+            self.controller.use_socp_var.set(False)
+            self.controller.socp_solver_var.set('ECOS')
+        def apply_and_close():
+            win.destroy()
+        tk.Button(btn_frame, text='Återställ', command=reset_defaults).grid(row=0, column=0, padx=5)
+        tk.Button(btn_frame, text='Stäng', command=win.destroy).grid(row=0, column=1, padx=5)
+        tk.Button(btn_frame, text='Verkställ', command=apply_and_close).grid(row=0, column=2, padx=5)
 
 class GoBack1(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self.go_back = tk.Button(self, text='<-', command=self.go_b)
-        self.go_back.pack(anchor='nw', padx=5, pady=5)
+        # Rad med tillbaka- och kugghjulsknapp till vänster
+        row_frame = tk.Frame(self)
+        row_frame.pack(anchor='nw', padx=5, pady=5)
+        self.go_back = tk.Button(row_frame, text='<-', font=tkFont.Font(size=12), command=self.go_b)
+        self.go_back.pack(side='left')
+        # Inställningsknapp öppnar Window2.open_settings
+        self.settings_btn = tk.Button(row_frame, text='⚙', font=tkFont.Font(size=12), command=parent.open_settings)
+        self.settings_btn.pack(side='left', padx=(8, 0))
     def go_b(self):
         self.controller.show_page(self.controller.page1)
         
