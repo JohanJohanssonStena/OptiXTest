@@ -14,6 +14,10 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from scipy.stats import norm
 from datetime import datetime
+try:
+    import cvxpy as cp
+except ImportError:
+    cp = None
 
 def main():
     app = Application()
@@ -135,7 +139,7 @@ class Window1(tk.Frame):
         tk.Checkbutton(opt_frame, text='Optimera med SOCP', variable=self.controller.use_socp_var).grid(row=0, column=0, columnspan=2, sticky='w', padx=6, pady=4)
         tk.Label(opt_frame, text='Lösare').grid(row=1, column=0, sticky='w', padx=6, pady=4)
         solver_menu = tk.OptionMenu(opt_frame, self.controller.socp_solver_var, 'ECOS', 'SCS', 'MOSEK')
-        solver_menu.grid(row=1, column=1, sticky='e', padx=6, pady=4)
+        solver_menu.grid(row=1, column=1, sticky='e', padx=6, pady=4) 
 
         # Sektion: Slackvikter (Alternativ B)
         slack_frame = tk.LabelFrame(win, text='Slackvikter (Alternativ B)', font=tkFont.Font(size=11))
