@@ -27,7 +27,7 @@ def main():
 class Application(tk.Tk): 
     def __init__(self):
         super().__init__()
-        self.title('OptiX 1.1.2')
+        self.title('OptiX 1.1.8')
         self.geometry("1380x800")
 
         if getattr(sys, 'frozen', False):
@@ -1052,19 +1052,8 @@ class Start(tk.Frame):
 
     
     def socp_optimize(self):
-        # Enkel progress-indikator (notera: synkron lösning kan blockera animation)
-        prog = tk.Toplevel(self)
-        prog.title('Optimerar (SOCP)')
-        tk.Label(prog, text='Arbetar...').pack(padx=10, pady=5)
-        bar = ttk.Progressbar(prog, mode='indeterminate', length=240)
-        bar.pack(padx=10, pady=(0,10))
-        bar.start(10)
-        prog.update_idletasks()
-
         # cvxpy krävs
         if cp is None:
-            bar.stop()
-            prog.destroy()
             messagebox.showerror('SOCP saknas', 'cvxpy kunde inte importeras. Installera cvxpy och en lösare (t.ex. ECOS) för att använda SOCP-läget.')
             raise RuntimeError('cvxpy not available')
 
@@ -1080,14 +1069,14 @@ class Start(tk.Frame):
         sigma_all = self.controller.all_test_std  # (m,24)
 
         # Solver-val
-        solver_name = getattr(self.controller, 'socp_solver_var', None).get() if hasattr(self.controller, 'socp_solver_var') else 'ECOS'
+        solver_name = getattr(self.controller, 'socp_solver_var', None).get() if hasattr(self.controller, 'socp_solver_var') else 'SCS'
         solver_map = {'ECOS': cp.ECOS, 'SCS': cp.SCS}
-        solver = solver_map.get(solver_name, cp.ECOS)
+        solver = solver_map.get(solver_name, cp.SCS)
         if solver_name == 'MOSEK':
             try:
                 solver = cp.MOSEK
             except Exception:
-                solver = cp.ECOS
+                solver = cp.SCS
 
         # z från target
         try:
@@ -1154,6 +1143,11 @@ class Start(tk.Frame):
                 mu = mu_all[:, e]
                 sigma = sigma_all[:, e]
                 constraints.append(mu @ x + z * cp.norm(cp.multiply(sigma, x), 2) <= W[i] * float(outer_max[i][e]))
+            # Add probability caps if present
+            if hasattr(self.controller, 'prob_caps') and i in self.controller.prob_caps:
+                for e, rhs in self.controller.prob_caps[i].items():
+                    row = sigma_all[:, e] ** 2
+                    constraints.append(cp.sum(cp.multiply(row, x)) <= rhs)
             # Globala gränser
             for typ, j, val in global_limits:
                 if typ == '<=':
@@ -1208,12 +1202,8 @@ class Start(tk.Frame):
         try:
             problem.solve(solver=solver, verbose=False)
         except Exception as err:
-            bar.stop()
-            prog.destroy()
             messagebox.showerror('SOCP-fel', f'Kunde inte lösa SOCP: {err}')
             raise
-        bar.stop()
-        prog.destroy()
         if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
             messagebox.showerror('SOCP-fel', f'Lösaren returnerade status: {problem.status}')
             raise RuntimeError('SOCP not optimal')
@@ -1229,6 +1219,7 @@ class Start(tk.Frame):
         rec_description = [None] * n
         for i in range(n):
             xi = np.array(x_vars[i].value).reshape(-1)
+            xi[abs(xi) < 1e-6] = 0.0
             p_idx = np.where(xi != 0)[0]
             rec_artnum[i] = self.set_artnum_p[p_idx]
             rec_description[i] = self.set_description[p_idx]
@@ -1334,161 +1325,83 @@ class Start(tk.Frame):
                     self.cost_calculator(index=i)
                 self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
 
-                # --- OPTIX_PROB_CAPS START --- (ändring) - iterativ LP med sannolikhets-caps (outer_max-baserad), exkluderar 4 och 22
-                try:
-                    target_prob = float(self.controller.target_pct_var.get())/100.0
-                except Exception:
-                    target_prob = 0.70
-
-                # tysta fel under interna solve-pass
-                self.controller.suppress_errors = True
-
-                # initiera struktur för variance caps
-                self.controller.prob_caps = {}
-
-                # hjälpfunktion: bygg/uppdatera caps utifrån aktuell lösning
-                def _build_or_update_prob_caps(target):
-                    K = len([e for e in range(24) if e not in (4, 22)])
-                    p_e = target ** (1.0 / K)
-                    z = norm.ppf(p_e)
-                    changed = False
-                    for ri in range(len(self.rec_['artnum'])):
-                        total_prob = float(self.controller.succ_dict[ri][0])
-                        if total_prob >= target:
-                            continue
-                        w_out = float(self.controller.cp_dict['weight_out'][ri])
-                        alloy = self.controller.rec_['alloy'][ri]
-                        outer_max = self.controller.cp_dict['outer_max'][ri]
-                        caps_i = self.controller.prob_caps.get(ri, {})
-                        for e in range(24):
-                            if e in (4, 22):
-                                continue
-                            delta = float(outer_max[e] - alloy[e])
-                            if delta <= 0:
-                                rhs = 0.0
-                            else:
-                                rhs = w_out * (delta / z) ** 2
-                            prev = caps_i.get(e, None)
-                            if prev is None or abs(prev - rhs) > 1e-6:
-                                caps_i[e] = rhs
-                                changed = True
-                        if caps_i:
-                            self.controller.prob_caps[ri] = caps_i
-                    return changed
-
-                # iterationsloop
-                try:
-                    max_iters = int(self.controller.max_attempts_var.get())
-                except Exception:
-                    max_iters = 15
-                max_iters = max(1, min(1000, max_iters))
-
-                for _ in range(max_iters):
-                    # lös LP med aktuella caps
-                    self.prepare()
+                if self.controller.use_socp_var.get():
+                    # initial SOCP
+                    self.socp_optimize()
                     setattr(self.controller, self.rec_key, self.rec_)
                     self.controller.succ_dict = {}
                     self.controller.cost_dict = {}
-                    for ii in range(len(self.rec_['artnum'])):
-                        self.success_procent(index=ii)
-                        self.cost_calculator(index=ii)
+                    for i in range(len(self.rec_['artnum'])):
+                        self.success_procent(index=i)
+                        self.cost_calculator(index=i)
                     self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
 
-                    # kontrollera mål
+                    # check if all meet target
+                    try:
+                        target_prob = float(self.controller.target_pct_var.get()) / 100.0
+                    except Exception:
+                        target_prob = 0.70
                     if all(self.controller.succ_dict[ri][0] >= target_prob for ri in range(len(self.rec_['artnum']))):
-                        break
+                        pass  # done
+                    else:
+                        # iterative loop for SOCP
+                        self.controller.prob_caps = {}
+                        def _build_or_update_prob_caps(target):
+                            K = len([e for e in range(24) if e not in (4, 22)])
+                            p_e = target ** (1.0 / K)
+                            z = norm.ppf(p_e)
+                            changed = False
+                            for ri in range(len(self.rec_['artnum'])):
+                                total_prob = float(self.controller.succ_dict[ri][0])
+                                if total_prob >= target:
+                                    continue
+                                w_out = float(self.controller.cp_dict['weight_out'][ri])
+                                alloy = self.controller.rec_['alloy'][ri]
+                                outer_max = self.controller.cp_dict['outer_max'][ri]
+                                caps_i = self.controller.prob_caps.get(ri, {})
+                                for e in range(24):
+                                    if e in (4, 22):
+                                        continue
+                                    delta = float(outer_max[e] - alloy[e])
+                                    if delta <= 0:
+                                        rhs = 0.0
+                                    else:
+                                        rhs = w_out * (delta / z) ** 2
+                                    prev = caps_i.get(e, None)
+                                    if prev is None or abs(prev - rhs) > 1e-6:
+                                        caps_i[e] = rhs
+                                        changed = True
+                                if caps_i:
+                                    self.controller.prob_caps[ri] = caps_i
+                            return changed
 
-                    # bygg/uppdatera caps från resultat
-                    if not _build_or_update_prob_caps(target_prob):
-                        # ingen förändring → konvergerat utan att nå mål
-                        break
+                        try:
+                            max_iters = int(self.controller.max_attempts_var.get())
+                        except Exception:
+                            max_iters = 15
+                        max_iters = max(1, min(1000, max_iters))
 
-                # Tuning-pass: försök undvika överleverans om kostnaden inte blir lägre
-                # Sikta mot att alla recept ligger i [target_prob, target_prob + band_width]
-                try:
-                    band_width = float(self.controller.band_width_var.get())/100.0
-                except Exception:
-                    band_width = 0.09
-                p_low = target_prob
-                p_high = min(0.999, target_prob + band_width)
-
-                # Hjälpfunktioner för caps
-                def _snapshot_caps():
-                    snap = {}
-                    for rix, caps_i in getattr(self.controller, 'prob_caps', {}).items():
-                        snap[rix] = dict(caps_i)
-                    return snap
-                def _restore_caps(snap):
-                    self.controller.prob_caps = {}
-                    for rix, caps_i in snap.items():
-                        self.controller.prob_caps[rix] = dict(caps_i)
-                def _scale_prob_caps(factor):
-                    if not hasattr(self.controller, 'prob_caps'):
-                        return
-                    for rix, caps_i in self.controller.prob_caps.items():
-                        for e in list(caps_i.keys()):
-                            if e in (4, 22):
-                                continue
-                            caps_i[e] *= factor
-
-                # Gör tuning endast om alla recept når p_low
-                all_ok = all(self.controller.succ_dict[ri][0] >= p_low for ri in range(len(self.rec_['artnum'])))
-                if all_ok:
-                    # Spara bästa
-                    best_caps = _snapshot_caps()
-                    best_cost_sum = float(self.controller.cost_dict['cost_sum']) if 'cost_sum' in self.controller.cost_dict else float('inf')
-                    gamma = 1.05
-                    max_tune_iters = 10
-                    tol_cost = 1e-3
-
-                    for _ in range(max_tune_iters):
-                        # relaxera caps
-                        _scale_prob_caps(gamma)
-                        # lös om
-                        self.prepare()
-                        setattr(self.controller, self.rec_key, self.rec_)
-                        self.controller.succ_dict = {}
-                        self.controller.cost_dict = {}
-                        for ii in range(len(self.rec_['artnum'])):
-                            self.success_procent(index=ii)
-                            self.cost_calculator(index=ii)
-                        cost_sum = float(self.controller.cost_dict['cost_sum']) if 'cost_sum' in self.controller.cost_dict else float('inf')
-
-                        probs = [float(self.controller.succ_dict[i][0]) for i in range(len(self.rec_['artnum']))]
-                        all_above_low = all(p >= p_low for p in probs)
-                        all_below_high = all(p <= p_high for p in probs)
-
-                        if not all_above_low:
-                            # tappade mål: återställ bästa och avbryt
-                            _restore_caps(best_caps)
-                            break
-
-                        # om kostnaden minskar eller sannolikheten kommer inom band -> behåll
-                        if cost_sum <= best_cost_sum - tol_cost or all_below_high:
-                            best_caps = _snapshot_caps()
-                            best_cost_sum = cost_sum
-                            if all_below_high:
+                        for _ in range(max_iters):
+                            # build caps
+                            if not _build_or_update_prob_caps(target_prob):
                                 break
-                        else:
-                            # ingen förbättring: återställ bästa och sluta
-                            _restore_caps(best_caps)
-                            break
+                            # solve SOCP with caps
+                            self.socp_optimize()
+                            setattr(self.controller, self.rec_key, self.rec_)
+                            self.controller.succ_dict = {}
+                            self.controller.cost_dict = {}
+                            for ii in range(len(self.rec_['artnum'])):
+                                self.success_procent(index=ii)
+                                self.cost_calculator(index=ii)
+                            self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
+                            # check
+                            if all(self.controller.succ_dict[ri][0] >= target_prob for ri in range(len(self.rec_['artnum']))):
+                                break
 
-                    # Lös en sista gång med bästa caps
-                    self.prepare()
-                    setattr(self.controller, self.rec_key, self.rec_)
-                    self.controller.succ_dict = {}
-                    self.controller.cost_dict = {}
-                    for ii in range(len(self.rec_['artnum'])):
-                        self.success_procent(index=ii)
-                        self.cost_calculator(index=ii)
-
-                # slå på fel och rapportera kvarvarande recept
-                self.controller.suppress_errors = False
-                remaining = [ri for ri in range(len(self.rec_['artnum'])) if self.controller.succ_dict[ri][0] < target_prob]
-                if remaining:
-                    messagebox.showerror('Mål ej uppnått', f'Kunde inte nå målnivån för index: {", ".join(map(str, remaining))}.')
-                # --- OPTIX_PROB_CAPS END ---
+                        # final check
+                        remaining = [ri for ri in range(len(self.rec_['artnum'])) if self.controller.succ_dict[ri][0] < target_prob]
+                        if remaining:
+                            messagebox.showwarning('Target Warning', f'SOCP did not fully meet target for indices: {", ".join(map(str, remaining))}. Achieved probabilities shown.')
 
 class Window2(tk.Frame):
     def __init__(self, parent, controller):
