@@ -8,29 +8,33 @@ import os
 import re
 import shutil
 import sys
+import copy
 from scipy.optimize import linprog
 from scipy.linalg import block_diag
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from scipy.stats import norm
 from datetime import datetime
+
 try:
     import cvxpy as cp
 except ImportError:
     cp = None
 
+
 def main():
     app = Application()
     app.mainloop()
 
-#Huvudapplikation, förskapar alla fönster och tar hand om byte mellan 
-class Application(tk.Tk): 
+
+# Huvudapplikation, förskapar alla fönster och tar hand om byte mellan
+class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('OptiX 1.1.8')
+        self.title("OptiX 1.1.17")
         self.geometry("1380x800")
 
-        if getattr(sys, 'frozen', False):
+        if getattr(sys, "frozen", False):
             # Running as a bundled executable
             icon_path = os.path.join(sys._MEIPASS, "Optix_Icon.ico")
         else:
@@ -38,20 +42,20 @@ class Application(tk.Tk):
             icon_path = "Optix_Icon.ico"
 
         self.iconbitmap(icon_path)
-        
+
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         self.container = tk.Frame(self)
         self.container.pack(fill="both", expand=True)
 
         # Initiera optimeringsinställningar tidigt så de kan användas i alla sidor
-        self.target_pct_var = tk.StringVar(value='70')
-        self.max_attempts_var = tk.StringVar(value='20')
-        self.band_width_var = tk.StringVar(value='9')
-        self.lambda_u_var = tk.StringVar(value='1.0')
-        self.lambda_v_var = tk.StringVar(value='1000000')
+        self.target_pct_var = tk.StringVar(value="70")
+        self.max_attempts_var = tk.StringVar(value="20")
+        self.band_width_var = tk.StringVar(value="9")
+        self.lambda_u_var = tk.StringVar(value="1.0")
+        self.lambda_v_var = tk.StringVar(value="1000000")
         self.use_socp_var = tk.BooleanVar(value=False)
-        self.socp_solver_var = tk.StringVar(value='ECOS')
+        self.socp_solver_var = tk.StringVar(value="ECOS")
 
         self.page1 = Window1(self.container, self)
         self.page2 = Window2(self.container, self)
@@ -64,11 +68,13 @@ class Application(tk.Tk):
         self.target_prob = tk.DoubleVar(value=0.70)
         self.show_page(self.page1)
 
-    def show_page(self,page):
+    def show_page(self, page):
         page.tkraise()
+
     def on_closing(self):
         self.quit()
         self.destroy()
+
 
 class Window1(tk.Frame):
     def __init__(self, parent, controller):
@@ -77,31 +83,39 @@ class Window1(tk.Frame):
         self.columnconfigure(1, weight=1)
         self.columnconfigure(2, weight=1)
         # Kugghjul i fönster 1 för att kunna justera innan start
-        self.settings_btn = tk.Button(self, text='⚙', font=tkFont.Font(size=12), command=self.open_settings)
+        self.settings_btn = tk.Button(
+            self, text="⚙", font=tkFont.Font(size=12), command=self.open_settings
+        )
         self.settings_btn.place(x=5, y=5)
-        self.rowconfigure(0, weight=1, uniform='group1')
-        self.rowconfigure(1, weight=1, uniform='group1')
-        self.rowconfigure(2, weight=1, uniform='group1')
+        self.rowconfigure(0, weight=1, uniform="group1")
+        self.rowconfigure(1, weight=1, uniform="group1")
+        self.rowconfigure(2, weight=1, uniform="group1")
 
-        frame_choosefile1 = FileLoader(self, controller, df_key='df1', label_text='Lager')
+        frame_choosefile1 = FileLoader(
+            self, controller, df_key="df1", label_text="Lager"
+        )
         frame_choosefile1.grid(row=0, column=0)
 
-        frame_choosefile2 = FileLoader(self, controller, df_key='df2', label_text='Styrplaner')
+        frame_choosefile2 = FileLoader(
+            self, controller, df_key="df2", label_text="Styrplaner"
+        )
         frame_choosefile2.grid(row=1, column=0)
 
-        frame_choosefile3 = FileLoader(self, controller, df_key='df3', label_text='Provugnsprotokoll (valfritt)')
+        frame_choosefile3 = FileLoader(
+            self, controller, df_key="df3", label_text="Provugnsprotokoll (valfritt)"
+        )
         frame_choosefile3.grid(row=2, column=0)
 
-        frame_listbox1 = InputForm(self, controller, 'frame1')
-        frame_listbox1.grid(row=0, column=1, sticky='nsew', rowspan=2)
+        frame_listbox1 = InputForm(self, controller, "frame1")
+        frame_listbox1.grid(row=0, column=1, sticky="nsew", rowspan=2)
 
-        frame_listbox2 = InputForm(self, controller, 'frame2')
-        frame_listbox2.grid(row=0, column=2, sticky='nsew', rowspan=2)
+        frame_listbox2 = InputForm(self, controller, "frame2")
+        frame_listbox2.grid(row=0, column=2, sticky="nsew", rowspan=2)
 
         frame_checkboxsimulation = CheckBoxSimulation(self, controller)
-        frame_checkboxsimulation.grid(row=2, column=2, sticky='se')
+        frame_checkboxsimulation.grid(row=2, column=2, sticky="se")
 
-        frame_start = Start(self, controller, rec_key='rec_', mode='start')
+        frame_start = Start(self, controller, rec_key="rec_", mode="start")
         frame_start.grid(row=2, column=1)
 
         controller.text_list1 = frame_listbox1.text_list
@@ -115,56 +129,94 @@ class Window1(tk.Frame):
 
     def open_settings(self):
         win = tk.Toplevel(self)
-        win.title('Inställningar')
+        win.title("Inställningar")
         win.transient(self.winfo_toplevel())
         win.grab_set()
         win.resizable(True, True)
-        win.geometry('900x700')
+        win.geometry("900x700")
         win.minsize(900, 700)
-        pad = {'padx': 12, 'pady': 8}
+        pad = {"padx": 12, "pady": 8}
 
         # Sektion: Sannolikhet
-        prob_frame = tk.LabelFrame(win, text='Sannolikhet', font=tkFont.Font(size=11))
-        prob_frame.grid(row=0, column=0, sticky='nsew', **pad)
-        tk.Label(prob_frame, text='Målvärde %').grid(row=0, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(row=0, column=1, sticky='e', padx=6, pady=4)
-        tk.Label(prob_frame, text='Bandbredd %').grid(row=1, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(row=1, column=1, sticky='e', padx=6, pady=4)
-        tk.Label(prob_frame, text='Max försök').grid(row=2, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(prob_frame, textvariable=self.controller.max_attempts_var, width=8).grid(row=2, column=1, sticky='e', padx=6, pady=4)
+        prob_frame = tk.LabelFrame(win, text="Sannolikhet", font=tkFont.Font(size=11))
+        prob_frame.grid(row=0, column=0, sticky="nsew", **pad)
+        tk.Label(prob_frame, text="Målvärde %").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(
+            row=0, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(prob_frame, text="Bandbredd %").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(
+            row=1, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(prob_frame, text="Max försök").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(
+            prob_frame, textvariable=self.controller.max_attempts_var, width=8
+        ).grid(row=2, column=1, sticky="e", padx=6, pady=4)
 
         # Sektion: Optimering
-        opt_frame = tk.LabelFrame(win, text='Optimering', font=tkFont.Font(size=11))
-        opt_frame.grid(row=1, column=0, sticky='nsew', **pad)
-        tk.Checkbutton(opt_frame, text='Optimera med SOCP', variable=self.controller.use_socp_var).grid(row=0, column=0, columnspan=2, sticky='w', padx=6, pady=4)
-        tk.Label(opt_frame, text='Lösare').grid(row=1, column=0, sticky='w', padx=6, pady=4)
-        solver_menu = tk.OptionMenu(opt_frame, self.controller.socp_solver_var, 'ECOS', 'SCS', 'MOSEK')
-        solver_menu.grid(row=1, column=1, sticky='e', padx=6, pady=4) 
+        opt_frame = tk.LabelFrame(win, text="Optimering", font=tkFont.Font(size=11))
+        opt_frame.grid(row=1, column=0, sticky="nsew", **pad)
+        tk.Checkbutton(
+            opt_frame, text="Optimera med SOCP", variable=self.controller.use_socp_var
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        tk.Label(opt_frame, text="Lösare").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        solver_menu = tk.OptionMenu(
+            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK"
+        )
+        solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
 
         # Sektion: Slackvikter (Alternativ B)
-        slack_frame = tk.LabelFrame(win, text='Slackvikter (Alternativ B)', font=tkFont.Font(size=11))
-        slack_frame.grid(row=2, column=0, sticky='nsew', **pad)
-        tk.Label(slack_frame, text='Lambda u').grid(row=0, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(row=0, column=1, sticky='e', padx=6, pady=4)
-        tk.Label(slack_frame, text='Lambda v').grid(row=1, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(row=1, column=1, sticky='e', padx=6, pady=4)
+        slack_frame = tk.LabelFrame(
+            win, text="Slackvikter (Alternativ B)", font=tkFont.Font(size=11)
+        )
+        slack_frame.grid(row=2, column=0, sticky="nsew", **pad)
+        tk.Label(slack_frame, text="Lambda u").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(
+            row=0, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(slack_frame, text="Lambda v").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(
+            row=1, column=1, sticky="e", padx=6, pady=4
+        )
 
         # Knappar
         btn_frame = tk.Frame(win)
-        btn_frame.grid(row=3, column=0, sticky='e', **pad)
+        btn_frame.grid(row=3, column=0, sticky="e", **pad)
+
         def reset_defaults():
-            self.controller.target_pct_var.set('70')
-            self.controller.band_width_var.set('9')
-            self.controller.max_attempts_var.set('20')
-            self.controller.lambda_u_var.set('1.0')
-            self.controller.lambda_v_var.set('1000000')
+            self.controller.target_pct_var.set("70")
+            self.controller.band_width_var.set("9")
+            self.controller.max_attempts_var.set("20")
+            self.controller.lambda_u_var.set("1.0")
+            self.controller.lambda_v_var.set("1000000")
             self.controller.use_socp_var.set(False)
-            self.controller.socp_solver_var.set('ECOS')
+            self.controller.socp_solver_var.set("ECOS")
+
         def apply_and_close():
             win.destroy()
-        tk.Button(btn_frame, text='Återställ', command=reset_defaults).grid(row=0, column=0, padx=5)
-        tk.Button(btn_frame, text='Stäng', command=win.destroy).grid(row=0, column=1, padx=5)
-        tk.Button(btn_frame, text='Verkställ', command=apply_and_close).grid(row=0, column=2, padx=5)
+
+        tk.Button(btn_frame, text="Återställ", command=reset_defaults).grid(
+            row=0, column=0, padx=5
+        )
+        tk.Button(btn_frame, text="Stäng", command=win.destroy).grid(
+            row=0, column=1, padx=5
+        )
+        tk.Button(btn_frame, text="Verkställ", command=apply_and_close).grid(
+            row=0, column=2, padx=5
+        )
+
 
 class InputForm(tk.Frame):
     def __init__(self, parent, controller, mode):
@@ -175,48 +227,86 @@ class InputForm(tk.Frame):
         self.rowconfigure(1, weight=1)
 
         self.entry = tk.Entry(self, font=tkFont.Font(size=12))
-        self.entry.grid(row=0, column=0, pady=(25, 0), padx=(5, 0), sticky='ew')
+        self.entry.grid(row=0, column=0, pady=(25, 0), padx=(5, 0), sticky="ew")
 
-        self.entry.bind('<Return>', self.add_to_list)
+        self.entry.bind("<Return>", self.add_to_list)
 
-        self.entry_btn = tk.Button(self, text='Add', font=tkFont.Font(size=12), command=self.add_to_list)
+        self.entry_btn = tk.Button(
+            self, text="Add", font=tkFont.Font(size=12), command=self.add_to_list
+        )
         self.entry_btn.grid(row=0, column=1, pady=(25, 0))
 
-        self.entry_btn2 = tk.Button(self, text='Clear', font=tkFont.Font(size=12), command=self.clear_list)
+        self.entry_btn2 = tk.Button(
+            self, text="Clear", font=tkFont.Font(size=12), command=self.clear_list
+        )
         self.entry_btn2.grid(row=0, column=2, pady=(25, 0), padx=(0, 5))
 
         self.text_list = tk.Listbox(self, font=tkFont.Font(size=12))
-        self.text_list.grid(row=1, column=0, columnspan=3, pady=(0, 80), padx=5, sticky='nsew')
+        self.text_list.grid(
+            row=1, column=0, columnspan=3, pady=(0, 80), padx=5, sticky="nsew"
+        )
 
-        self.valid_second_words = ['MIN', 'MAX', 'COST0', '=', 'ALLOW'] #godkända funktioner, skrivna i caps
+        self.valid_second_words = [
+            "MIN",
+            "MAX",
+            "COST0",
+            "=",
+            "ALLOW",
+        ]  # godkända funktioner, skrivna i caps
 
         self.controller.set_styrplaner = []
         self.controller.artiklar = []
 
         self.controller.lr_dict = {}
+
     def validate_input(self):
 
         def is_float(value: str) -> bool:
             # Byt ut komma till punkt för enhetlig hantering
-            normalized = value.replace(',', '.')
-            
+            normalized = value.replace(",", ".")
+
             # Kontrollera att det är ett positivt heltal eller decimaltal med max en punkt
-            pattern = r'^(0|[1-9]\d*)(\.\d+)?$'
-            
+            pattern = r"^(0|[1-9]\d*)(\.\d+)?$"
+
             return bool(re.match(pattern, normalized))
 
-        elem = ['Si', 'Fe', 'Cu', 'Mn', 'Mg', 'Ni', 'Zn', 'Ti', 'Pb', 'Sn', 'Cr', 'Na', 'Sr','Sb', 'P', 'Bi', 'Ca', 'Cd', 'Zr', 'Be', 'B', 'Li', 'Al', 'Hg']
+        elem = [
+            "Si",
+            "Fe",
+            "Cu",
+            "Mn",
+            "Mg",
+            "Ni",
+            "Zn",
+            "Ti",
+            "Pb",
+            "Sn",
+            "Cr",
+            "Na",
+            "Sr",
+            "Sb",
+            "P",
+            "Bi",
+            "Ca",
+            "Cd",
+            "Zr",
+            "Be",
+            "B",
+            "Li",
+            "Al",
+            "Hg",
+        ]
         elem = [e.upper() for e in elem]
-        if self.mode == 'frame2' or self.mode == 'frame3':
+        if self.mode == "frame2" or self.mode == "frame3":
             parts = self.text.strip().split()
             if len(parts) < 2 or len(parts) > 3:
                 return False
 
             first = parts[0].upper()
             second = parts[1].upper()
-            value = parts[2] if len(parts) == 3 else ''
+            value = parts[2] if len(parts) == 3 else ""
 
-            if self.mode == 'frame3' and first in elem and is_float(second):
+            if self.mode == "frame3" and first in elem and is_float(second):
                 return True
 
             if first not in self.controller.artiklar:
@@ -226,22 +316,22 @@ class InputForm(tk.Frame):
                 return False
 
             rule = second
-            if rule == 'MAX' or rule == 'MIN' or rule == '=':
+            if rule == "MAX" or rule == "MIN" or rule == "=":
                 return value.isdigit()
-            elif rule == 'COST0':
+            elif rule == "COST0":
                 return len(parts) == 2
-            elif self.mode == 'frame3' and rule == 'ALLOW':
+            elif self.mode == "frame3" and rule == "ALLOW":
                 return len(parts) == 2
 
-        if self.mode == 'frame1':
+        if self.mode == "frame1":
             if self.text.strip() in self.controller.set_styrplaner:
                 self.text = self.text.strip()
                 return True
             else:
                 return False
-            
+
     def local_rules(self):
-        if self.mode == 'frame3':
+        if self.mode == "frame3":
             if self.controller.index not in self.controller.lr_dict:
                 self.controller.lr_dict[self.controller.index] = [self.text]
             else:
@@ -253,14 +343,16 @@ class InputForm(tk.Frame):
             self.text_list.insert(tk.END, self.text)
             self.entry.delete(0, tk.END)
             self.local_rules()
-            
+
     def clear_list(self):
         selected = self.text_list.curselection()
         if selected:
             self.text_list.delete(selected[0])
-            if self.mode == 'frame3':
-                self.controller.lr_dict[self.controller.index].remove(self.controller.lr_dict[self.controller.index][selected[0]])
-            if self.mode == 'frame1' and self.controller.lr_dict:
+            if self.mode == "frame3":
+                self.controller.lr_dict[self.controller.index].remove(
+                    self.controller.lr_dict[self.controller.index][selected[0]]
+                )
+            if self.mode == "frame1" and self.controller.lr_dict:
                 self.controller.lr_dict.pop(selected[0], None)
                 temp_dict = {}
                 for i in sorted(self.controller.lr_dict.keys()):
@@ -270,32 +362,48 @@ class InputForm(tk.Frame):
                         temp_dict[i] = self.controller.lr_dict[i]
                 self.controller.lr_dict = temp_dict
 
+
 class FileLoader(tk.Frame):
     def __init__(self, parent, controller, df_key, label_text):
         super().__init__(parent)
         self.controller = controller
         self.df_key = df_key
-        self.columnconfigure(0, weight = 1)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        self.frame = tk.LabelFrame(self, text=label_text, labelanchor='n', font=tkFont.Font(size=12))
-        self.frame.grid(row=0, column=0, sticky='ew')
-        
-        self.choose_btn = tk.Button(self.frame, text='Choose file', anchor='center',command=self.choose_file, font=tkFont.Font(size=12))
-        self.choose_btn.grid(row=1,column=0, pady=(10,5), padx=65)
+        self.frame = tk.LabelFrame(
+            self, text=label_text, labelanchor="n", font=tkFont.Font(size=12)
+        )
+        self.frame.grid(row=0, column=0, sticky="ew")
 
-        self.file_name_label = tk.Label(self.frame, text="No file selected", anchor='center')
-        self.file_name_label.grid(row=2, column=0, sticky='ew')
+        self.choose_btn = tk.Button(
+            self.frame,
+            text="Choose file",
+            anchor="center",
+            command=self.choose_file,
+            font=tkFont.Font(size=12),
+        )
+        self.choose_btn.grid(row=1, column=0, pady=(10, 5), padx=65)
+
+        self.file_name_label = tk.Label(
+            self.frame, text="No file selected", anchor="center"
+        )
+        self.file_name_label.grid(row=2, column=0, sticky="ew")
         self.df = pd.DataFrame()
 
     def choose_file(self, _event=None):
-        file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")], title="Choose an Excel file")
+        file_path = filedialog.askopenfilename(
+            filetypes=[("Excel files", "*.xlsx *.xls")], title="Choose an Excel file"
+        )
 
         if file_path:
             error_message = True
             try:
                 self.df = pd.read_excel(file_path)
             except PermissionError:
-                messagebox.showerror("Permission Denied", "The file is open in another program or you don't have permission to access it.")
+                messagebox.showerror(
+                    "Permission Denied",
+                    "The file is open in another program or you don't have permission to access it.",
+                )
                 error_message = False
 
             setattr(self.controller, self.df_key, self.df)
@@ -303,44 +411,80 @@ class FileLoader(tk.Frame):
                 self.file_name = os.path.basename(file_path)
                 self.file_name_label.config(text=self.file_name)
 
-                if self.df_key == 'df1' and self.df.columns[:3].tolist() == ['Part No', 'Part Description', 'Estimated Material Cost']:
-                    artiklar = self.df['Part No'].tolist()
+                if self.df_key == "df1" and self.df.columns[:3].tolist() == [
+                    "Part No",
+                    "Part Description",
+                    "Estimated Material Cost",
+                ]:
+                    artiklar = self.df["Part No"].tolist()
                     self.controller.artiklar = list(set(artiklar))
 
-                if self.df_key == 'df2' and self.df.columns[:3].tolist() == ['Part No', 'Mearsurement Spec', 'Si']:
-                    styrplaner = self.df['Part No'].tolist()
-                    self.controller.set_styrplaner = styrplaner[0:len(styrplaner):6]
+                if self.df_key == "df2" and self.df.columns[:3].tolist() == [
+                    "Part No",
+                    "Mearsurement Spec",
+                    "Si",
+                ]:
+                    styrplaner = self.df["Part No"].tolist()
+                    self.controller.set_styrplaner = styrplaner[0 : len(styrplaner) : 6]
 
-                if self.df.columns[:5].tolist() == ['Leverantör', 'Inköpt råvara', 'Klassad råvara', 'Klassad variant', 'Provdatum']:
-                    appdata_local = os.getenv('LOCALAPPDATA')
-                    folder1 = 'OptiX'
-                    folder2 = 'Data'
-                    folder3 = 'Provugn'
+                if self.df.columns[:5].tolist() == [
+                    "Leverantör",
+                    "Inköpt råvara",
+                    "Klassad råvara",
+                    "Klassad variant",
+                    "Provdatum",
+                ]:
+                    appdata_local = os.getenv("LOCALAPPDATA")
+                    folder1 = "OptiX"
+                    folder2 = "Data"
+                    folder3 = "Provugn"
                     full_path = os.path.join(appdata_local, folder1, folder2, folder3)
                     file = os.listdir(full_path)
-                    full_path = os.path.join(appdata_local, folder1, folder2, folder3, file[0])
+                    full_path = os.path.join(
+                        appdata_local, folder1, folder2, folder3, file[0]
+                    )
                     shutil.copy2(file_path, full_path)
             elif error_message:
-                messagebox.showerror('Error', 'Wrong File')
+                messagebox.showerror("Error", "Wrong File")
 
-            
     def validate_file(self):
-        if self.df_key == 'df1' and self.df.columns[:3].tolist() == ['Part No', 'Part Description', 'Estimated Material Cost']:
+        if self.df_key == "df1" and self.df.columns[:3].tolist() == [
+            "Part No",
+            "Part Description",
+            "Estimated Material Cost",
+        ]:
             return True
-        elif self.df_key == 'df2' and self.df.columns[:3].tolist() == ['Part No', 'Mearsurement Spec', 'Si']:
+        elif self.df_key == "df2" and self.df.columns[:3].tolist() == [
+            "Part No",
+            "Mearsurement Spec",
+            "Si",
+        ]:
             return True
-        elif self.df_key == 'df3' and self.df.columns[:5].tolist() == ['Leverantör', 'Inköpt råvara', 'Klassad råvara', 'Klassad variant', 'Provdatum']:
+        elif self.df_key == "df3" and self.df.columns[:5].tolist() == [
+            "Leverantör",
+            "Inköpt råvara",
+            "Klassad råvara",
+            "Klassad variant",
+            "Provdatum",
+        ]:
             return True
         else:
             return False
+
 
 class CheckBoxSimulation(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
         self.controller.checkbox_var = tk.BooleanVar()
-        checkbox = tk.Checkbutton(self, text="Simulation", variable=self.controller.checkbox_var, font=tkFont.Font(size=12))
-        checkbox.grid(row=0, column=0, padx=20, pady=20, sticky='se')
+        checkbox = tk.Checkbutton(
+            self,
+            text="Simulation",
+            variable=self.controller.checkbox_var,
+            font=tkFont.Font(size=12),
+        )
+        checkbox.grid(row=0, column=0, padx=20, pady=20, sticky="se")
+
 
 class Start(tk.Frame):
     def __init__(self, parent, controller, rec_key, mode):
@@ -350,55 +494,96 @@ class Start(tk.Frame):
         self.mode = mode
         self.first_run = True
         self.controller.success_bool = True
-        self.columnconfigure(0, weight = 1)
+        self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
-        if self.mode == 'start':
-            self.start_button = tk.Button(self, width=20, height=4, bg='green', text='Start', font=tkFont.Font(size=16), command=self.start_combined)
+        if self.mode == "start":
+            self.start_button = tk.Button(
+                self,
+                width=20,
+                height=4,
+                bg="green",
+                text="Start",
+                font=tkFont.Font(size=16),
+                command=self.start_combined,
+            )
             self.start_button.grid(row=0, column=0)
-        if self.mode == 'remake':
-            self.remake_button = tk.Button(self, width=20, height=4, bg='green', text='Återskapa', font=tkFont.Font(size=14), command=self.start_combined)
-            self.remake_button.grid(row=0, column=0, padx=5, pady=5, sticky='ne')
-        self.rec_ = {'artnum':np.empty((0,)), 'amount':np.empty((0,))}
+        if self.mode == "remake":
+            self.remake_button = tk.Button(
+                self,
+                width=20,
+                height=4,
+                bg="green",
+                text="Återskapa",
+                font=tkFont.Font(size=14),
+                command=self.start_combined,
+            )
+            self.remake_button.grid(row=0, column=0, padx=5, pady=5, sticky="ne")
+        self.rec_ = {"artnum": np.empty((0,)), "amount": np.empty((0,))}
 
     def read_control_plan(self, _event=None):
-        df = self.controller.df2 #läsa in styrplan
+        df = self.controller.df2  # läsa in styrplan
         r = 0.5
 
-        elem = ['Si', 'Fe', 'Cu', 'Mn', 'Mg', 'Ni', 'Zn', 'Ti', 'Pb', 'Sn', 'Cr', 'Na', 'Sr','Sb', 'P', 'Bi', 'Ca', 'Cd', 'Zr', 'Be', 'B', 'Li', 'Al', 'Hg']
+        elem = [
+            "Si",
+            "Fe",
+            "Cu",
+            "Mn",
+            "Mg",
+            "Ni",
+            "Zn",
+            "Ti",
+            "Pb",
+            "Sn",
+            "Cr",
+            "Na",
+            "Sr",
+            "Sb",
+            "P",
+            "Bi",
+            "Ca",
+            "Cd",
+            "Zr",
+            "Be",
+            "B",
+            "Li",
+            "Al",
+            "Hg",
+        ]
 
-        sales_article = np.array(df['Part No'].tolist())
-        set_sales_article = sales_article[0:len(sales_article):6]
+        sales_article = np.array(df["Part No"].tolist())
+        set_sales_article = sales_article[0 : len(sales_article) : 6]
 
-        all_tolerance=np.empty((len(sales_article),0))
+        all_tolerance = np.empty((len(sales_article), 0))
         for i in elem:
             temp_list = np.array(df[i].tolist())
             temp_list = temp_list[:, np.newaxis]
             all_tolerance = np.hstack((all_tolerance, temp_list))
 
-        outer_min = all_tolerance[0:len(sales_article):6]
-        outer_max = all_tolerance[1:len(sales_article):6]
-        inner_min = all_tolerance[2:len(sales_article):6]
-        inner_max = all_tolerance[3:len(sales_article):6]
-        dec_min = all_tolerance[4:len(sales_article):6]
-        dec_max = all_tolerance[5:len(sales_article):6]
+        outer_min = all_tolerance[0 : len(sales_article) : 6]
+        outer_max = all_tolerance[1 : len(sales_article) : 6]
+        inner_min = all_tolerance[2 : len(sales_article) : 6]
+        inner_max = all_tolerance[3 : len(sales_article) : 6]
+        dec_min = all_tolerance[4 : len(sales_article) : 6]
+        dec_max = all_tolerance[5 : len(sales_article) : 6]
         dec_min[np.isnan(dec_min)] = 0
         tol_min = outer_min.copy()
         tol_min[~np.isnan(inner_min)] = inner_min[~np.isnan(inner_min)]
-        tol_min = tol_min - r * np.power(10, (dec_min)*(-1))
+        tol_min = tol_min - r * np.power(10, (dec_min) * (-1))
         dec_max[np.isnan(dec_max)] = 0
         tol_max = outer_max.copy()
         tol_max[~np.isnan(inner_max)] = inner_max[~np.isnan(inner_max)]
-        tol_max = tol_max + r * np.power(10, (dec_max)*(-1))
+        tol_max = tol_max + r * np.power(10, (dec_max) * (-1))
 
-        outer_min = outer_min - r * np.power(10, (dec_max)*(-1))
-        outer_max = outer_max + r * np.power(10, (dec_max)*(-1))
+        outer_min = outer_min - r * np.power(10, (dec_max) * (-1))
+        outer_max = outer_max + r * np.power(10, (dec_max) * (-1))
 
         tol_max[tol_max > 100] = 100
         tol_min[tol_min < 0] = 0
 
         outer_max[outer_max > 100] = 100
         outer_min[outer_min < 0] = 0
-        
+
         tol_max = np.squeeze(tol_max)
         tol_min = np.squeeze(tol_min)
         recipe_list = self.controller.text_list1.get(0, tk.END)
@@ -415,11 +600,23 @@ class Start(tk.Frame):
 
         for i in range(len(tol_max)):
             tol_max[i][4] += 0.3
-        
-        weight_in = [35500 for _ in range(len(self.controller.text_list1.get(0, tk.END)))]
-        weight_out = [29000 for _ in range(len(self.controller.text_list1.get(0, tk.END)))]
 
-        self.controller.cp_dict = {'outer_min': temp_omin, 'outer_max': temp_omax, 'tol_min': temp_min, 'tol_max': temp_max, 'elem': elem, 'weight_in': weight_in, 'weight_out': weight_out}
+        weight_in = [
+            35500 for _ in range(len(self.controller.text_list1.get(0, tk.END)))
+        ]
+        weight_out = [
+            29000 for _ in range(len(self.controller.text_list1.get(0, tk.END)))
+        ]
+
+        self.controller.cp_dict = {
+            "outer_min": temp_omin,
+            "outer_max": temp_omax,
+            "tol_min": temp_min,
+            "tol_max": temp_max,
+            "elem": elem,
+            "weight_in": weight_in,
+            "weight_out": weight_out,
+        }
 
     def read_testing(self, _event=None):
         # skapar list från excelfil
@@ -427,115 +624,143 @@ class Start(tk.Frame):
 
         if df.equals(pd.DataFrame()):
 
-            appdata_local = os.getenv('LOCALAPPDATA')
-            folder1 = 'OptiX'
-            folder2 = 'Data'
-            folder3 = 'Provugn'
+            appdata_local = os.getenv("LOCALAPPDATA")
+            folder1 = "OptiX"
+            folder2 = "Data"
+            folder3 = "Provugn"
             full_path = os.path.join(appdata_local, folder1, folder2, folder3)
             file = os.listdir(full_path)
             full_path = os.path.join(appdata_local, folder1, folder2, folder3, file[0])
             df = pd.read_excel(full_path)
 
-        ikr = np.array(df['Inköpt råvara'].tolist())
-        klr = np.array(df['Klassad råvara'].tolist())
-        obv = np.array(df['Anmärkning'].tolist())
-        #tar de n senaste proverna
+        ikr = np.array(df["Inköpt råvara"].tolist())
+        klr = np.array(df["Klassad råvara"].tolist())
+        obv = np.array(df["Anmärkning"].tolist())
+        # tar de n senaste proverna
         n = 5000
         obv = np.delete(obv, range(n, len(ikr)))
         ikr = np.delete(ikr, range(n, len(ikr)))
         klr = np.delete(klr, range(n, len(klr)))
-        #bytar inköpt råvara till klassad råvara
-        klr[klr == '-'] = 'nan'
-        ikr[klr != 'nan'] = klr[klr != 'nan']
-        #alla ämnen
-        elem = ['Si%', 'Fe%', 'Cu%', 'Mn%', 'Mg%', 'Ni%', 'Zn%', 'Ti%', 'Pb%', 'Sn%', 'Cr%', 'Na%', 'Sr%','Sb%', 'P%', 'Bi%', 'Ca%', 'Cd%', 'Zr%', 'Be%', 'B%', 'Li%', 'Al%', 'Hg%']
+        # bytar inköpt råvara till klassad råvara
+        klr[klr == "-"] = "nan"
+        ikr[klr != "nan"] = klr[klr != "nan"]
+        # alla ämnen
+        elem = [
+            "Si%",
+            "Fe%",
+            "Cu%",
+            "Mn%",
+            "Mg%",
+            "Ni%",
+            "Zn%",
+            "Ti%",
+            "Pb%",
+            "Sn%",
+            "Cr%",
+            "Na%",
+            "Sr%",
+            "Sb%",
+            "P%",
+            "Bi%",
+            "Ca%",
+            "Cd%",
+            "Zr%",
+            "Be%",
+            "B%",
+            "Li%",
+            "Al%",
+            "Hg%",
+        ]
 
-        all_tests=np.empty((n,0))
+        all_tests = np.empty((n, 0))
         for i in elem:
             temp_list = np.array(df[i].tolist())
             temp_list = np.delete(temp_list, range(n, len(temp_list)))
             temp_list = temp_list[:, np.newaxis]
             all_tests = np.hstack((all_tests, temp_list))
 
-        #filtrering av dokumenet, toma tester, tar bort P, sätter in uträknat Hg och Al värde
-        p = np.where(all_tests[:, 0] == '-')
+        # filtrering av dokumenet, toma tester, tar bort P, sätter in uträknat Hg och Al värde
+        p = np.where(all_tests[:, 0] == "-")
         all_tests = np.delete(all_tests, p, axis=0)
         ikr = np.delete(ikr, p)
         klr = np.delete(klr, p)
         obv = np.delete(obv, p)
 
-        pattern = re.compile(r'^\d{3}[Pp]?$')
+        pattern = re.compile(r"^\d{3}[Pp]?$")
         p = [i for i, val in enumerate(ikr) if not pattern.match(val)]
         all_tests = np.delete(all_tests, p, axis=0)
         ikr = np.delete(ikr, p)
         klr = np.delete(klr, p)
         obv = np.delete(obv, p)
 
-        ikr = np.char.replace(ikr, 'P', '')
-        ikr = np.char.replace(ikr, 'p', '')
+        ikr = np.char.replace(ikr, "P", "")
+        ikr = np.char.replace(ikr, "p", "")
         set_artnum = np.array(list(set(ikr)))
         artnum = ikr
 
-        
-        all_tests[:,23][all_tests[:,23] == '-'] = 0
-        p = np.where(all_tests[:,22] == '-')
-        all_tests[p,22] = 100-np.sum(np.squeeze((all_tests[p,0:22].astype(np.float64))),axis=1)
+        all_tests[:, 23][all_tests[:, 23] == "-"] = 0
+        p = np.where(all_tests[:, 22] == "-")
+        all_tests[p, 22] = 100 - np.sum(
+            np.squeeze((all_tests[p, 0:22].astype(np.float64))), axis=1
+        )
         all_tests = all_tests.astype(np.float64)
-        #färdig filtrerat
-        #beräkning på medelvärde och standardavvikelse
+        # färdig filtrerat
+        # beräkning på medelvärde och standardavvikelse
         imp_elem = [1, 2, 6]
         imp_tests = all_tests[:, imp_elem]
         mean_c = np.mean(imp_tests, axis=0)
         imp_tests = imp_tests / mean_c.reshape(1, -1)
 
-        imp_tests = np.power(np.sum(np.power(imp_tests, 2), axis=1), 1/2)
+        imp_tests = np.power(np.sum(np.power(imp_tests, 2), axis=1), 1 / 2)
         set_std = np.empty(0)
         set_mean = np.empty(0)
         for i in set_artnum:
             p = np.where(i == artnum)
             set_std = np.hstack((set_std, np.std(imp_tests[p])))
             set_mean = np.hstack((set_mean, np.mean(imp_tests[p])))
-        #kontrollerar vilka värden som är utanför toleransen och tar bort dessa
+        # kontrollerar vilka värden som är utanför toleransen och tar bort dessa
 
         amount_test = np.empty(0)
         for i in set_artnum:
             amount_test = np.hstack((amount_test, len(np.where(i == artnum)[0])))
 
-
-        std_multiplier = 1.645 #1.645 tar bort de sämsta 10 % av mätningarna
+        std_multiplier = 1.645  # 1.645 tar bort de sämsta 10 % av mätningarna
         p2 = np.empty(0)
-        for i in range(0,len(set_artnum)):
+        for i in range(0, len(set_artnum)):
             p = (np.where(set_artnum[i] == artnum))[0]
             for j in p:
-                if (imp_tests[j] > set_mean[i]+set_std[i]*std_multiplier or imp_tests[j] < set_mean[i]-set_std[i]*std_multiplier) and amount_test[i] > 3:
+                if (
+                    imp_tests[j] > set_mean[i] + set_std[i] * std_multiplier
+                    or imp_tests[j] < set_mean[i] - set_std[i] * std_multiplier
+                ) and amount_test[i] > 3:
                     p2 = np.hstack((p2, j))
 
         p2 = p2.astype(np.int32)
         all_tests = np.delete(all_tests, p2, axis=0)
         artnum = np.delete(artnum, p2)
-        #räknar ut medelvärdet med utan de dåliga testerna
-        set_mean_final = np.empty((0,24))
+        # räknar ut medelvärdet med utan de dåliga testerna
+        set_mean_final = np.empty((0, 24))
         for i in set_artnum:
             p = np.where(i == artnum)[0]
-            set_mean_final = np.vstack((set_mean_final, np.mean(all_tests[p,:], axis=0)))
+            set_mean_final = np.vstack(
+                (set_mean_final, np.mean(all_tests[p, :], axis=0))
+            )
 
-        
-        #manuellt dokument
-        appdata_local = os.getenv('LOCALAPPDATA')
-        folder1 = 'OptiX'
-        folder2 = 'Data'
-        file = 'Saknade analyser.xlsx'
+        # manuellt dokument
+        appdata_local = os.getenv("LOCALAPPDATA")
+        folder1 = "OptiX"
+        folder2 = "Data"
+        file = "Saknade analyser.xlsx"
         full_path = os.path.join(appdata_local, folder1, folder2, file)
         manual_df = pd.read_excel(full_path)
-        manual_artnum = np.array(manual_df['Klassad råvara'].tolist())
+        manual_artnum = np.array(manual_df["Klassad råvara"].tolist())
 
-        #tar bort dubbletter, prioriterar manuella listan 
+        # tar bort dubbletter, prioriterar manuella listan
         mask = ~np.isin(set_artnum, manual_artnum)
         set_mean_final = set_mean_final[mask, :]
         set_artnum = set_artnum[mask]
-        
 
-        manual_tests = np.empty((len(manual_artnum),0))
+        manual_tests = np.empty((len(manual_artnum), 0))
         for i in elem:
             temp_list = np.array(manual_df[i].tolist())
             temp_list = temp_list[:, np.newaxis]
@@ -545,60 +770,70 @@ class Start(tk.Frame):
         manual_tests = manual_tests[~p]
         manual_artnum = manual_artnum[~p]
 
-        p = np.isnan(manual_tests[:,22])
+        p = np.isnan(manual_tests[:, 22])
 
         manual_tests[np.isnan(manual_tests)] = 0
 
-        manual_tests[p,22] = 100-np.sum(np.squeeze((manual_tests[p,0:22].astype(np.float64))),axis=1)
+        manual_tests[p, 22] = 100 - np.sum(
+            np.squeeze((manual_tests[p, 0:22].astype(np.float64))), axis=1
+        )
         manual_tests = manual_tests.astype(np.float64)
 
-        #slår ihop båda.
+        # slår ihop båda.
 
         set_mean_final = np.vstack((set_mean_final, manual_tests))
         set_artnum = np.hstack((set_artnum, manual_artnum))
         set_artnum_p = set_artnum.copy()
 
         aa_df = self.controller.df1
-        all_artnum = np.array(list(set(aa_df['Part No'].tolist())))
+        all_artnum = np.array(list(set(aa_df["Part No"].tolist())))
 
         # #Sätter ett P bakom de artikelnummer som ska ha ett
-        p_mask = np.char.endswith(all_artnum, 'P')
-        p_artnums = all_artnum[p_mask].astype('U16')
+        p_mask = np.char.endswith(all_artnum, "P")
+        p_artnums = all_artnum[p_mask].astype("U16")
         # Remove 'P' from the end of each matched article number
-        base_artnums = np.char.rstrip(p_artnums, 'P')
+        base_artnums = np.char.rstrip(p_artnums, "P")
 
         # Replace matching entries in set_artnum_p with their 'P' version
         for i in range(len(p_artnums)):
-            set_artnum_p[set_artnum_p.astype('U16') == base_artnums[i]] = p_artnums[i]
+            set_artnum_p[set_artnum_p.astype("U16") == base_artnums[i]] = p_artnums[i]
 
         self.set_artnum_p = set_artnum_p
         self.set_mean_final = set_mean_final
         self.set_artnum = set_artnum
-        self.controller.testing_dict = {'set_artnum_p': set_artnum_p, 'set_mean_final': set_mean_final, 'set_artnum': set_artnum}
+        self.controller.testing_dict = {
+            "set_artnum_p": set_artnum_p,
+            "set_mean_final": set_mean_final,
+            "set_artnum": set_artnum,
+        }
 
-        #ta fram standard deviation
+        # ta fram standard deviation
         all_test_std = np.empty((0, 24))
         for i in set_artnum:
             p = np.where(i == artnum)[0]
             if len(p) > 0:
-                all_test_std = np.vstack((all_test_std, np.std(all_tests[p, :], axis=0)))
+                all_test_std = np.vstack(
+                    (all_test_std, np.std(all_tests[p, :], axis=0))
+                )
 
         mean_temp = np.mean(all_tests, axis=0)
         mean_temp[mean_temp == 0] = 1
-        col_mean = np.mean(all_test_std, axis=0) * 1.5 
+        col_mean = np.mean(all_test_std, axis=0) * 1.5
         col_mean_d = col_mean / mean_temp
-        std_addon = np.zeros((len(set_artnum_p)-all_test_std.shape[0], 24))
+        std_addon = np.zeros((len(set_artnum_p) - all_test_std.shape[0], 24))
         all_test_std = np.vstack((all_test_std, std_addon))
 
         for i in range(len(set_artnum_p)):
-            if np.all(all_test_std[i,:] == 0):
-                bool_zero = set_mean_final[i, :]==0
+            if np.all(all_test_std[i, :] == 0):
+                bool_zero = set_mean_final[i, :] == 0
                 all_test_std[i][bool_zero] = col_mean[bool_zero]
-                all_test_std[i][~bool_zero] = set_mean_final[i, :][~bool_zero] * col_mean_d[~bool_zero]
+                all_test_std[i][~bool_zero] = (
+                    set_mean_final[i, :][~bool_zero] * col_mean_d[~bool_zero]
+                )
 
         for i, value in enumerate(set_artnum.astype(float)):
             if value >= 800 or value in [640, 150]:
-                all_test_std[i,:] = 0
+                all_test_std[i, :] = 0
         all_test_std[all_test_std > 10] = 5
         self.controller.all_test_std = all_test_std
 
@@ -610,12 +845,12 @@ class Start(tk.Frame):
         # df = pd.DataFrame(data, columns=column_titles)
         # df.insert(0, 'Label', labels)
         # df.to_excel('setmeanfinal.xlsx', index=False)
-    
+
     def read_rules(self, _event=None):
-        appdata_local = os.getenv('LOCALAPPDATA')
-        folder1 = 'OptiX'
-        folder2 = 'Data'
-        file = 'Regler.xlsx'
+        appdata_local = os.getenv("LOCALAPPDATA")
+        folder1 = "OptiX"
+        folder2 = "Data"
+        file = "Regler.xlsx"
         full_path = os.path.join(appdata_local, folder1, folder2, file)
 
         df = pd.read_excel(full_path)
@@ -623,11 +858,11 @@ class Start(tk.Frame):
         amount = df.iloc[0].tolist()
         df = df.iloc[1:].reset_index(drop=True)
 
-        A_add_on = np.empty((0,len(self.set_artnum_p)))
+        A_add_on = np.empty((0, len(self.set_artnum_p)))
         for i in col_names:
             A_add = np.zeros((1, len(self.set_artnum_p)))[0]
             col = np.array(df[i].tolist())
-            if col.dtype == np.dtype('float'):
+            if col.dtype == np.dtype("float"):
                 col = col[~np.isnan(col)]
                 col = col.astype(int)
                 col = col.astype(str)
@@ -637,23 +872,24 @@ class Start(tk.Frame):
 
         self.A_add_on = A_add_on
         self.b_add_on = amount
+
     def read_inventory(self, _event=None):
         df = self.controller.df1
-        artnum = np.array(df['Part No'].tolist())
-        cost = np.array(df['Estimated Material Cost'].tolist())
-        exchange = np.array(df['Utbyte (Exchange)'].tolist())
-        quantity = np.array(df['Available Qty'].tolist())
-        spot = np.array(df['Warehouse'].tolist())
-        exact_spot = np.array(df['Location No'].tolist())
-        description = np.array(df['Part Description'].tolist())
+        artnum = np.array(df["Part No"].tolist())
+        cost = np.array(df["Estimated Material Cost"].tolist())
+        exchange = np.array(df["Utbyte (Exchange)"].tolist())
+        quantity = np.array(df["Available Qty"].tolist())
+        spot = np.array(df["Warehouse"].tolist())
+        exact_spot = np.array(df["Location No"].tolist())
+        description = np.array(df["Part Description"].tolist())
 
         self.controller.boxes = {}
 
-        p1 = np.where(spot == 'BOX')[0]
-        
+        p1 = np.where(spot == "BOX")[0]
+
         artnum_box = artnum[p1]
         set_artnum_box = np.array(list(set(list(artnum_box))))
-        quantity_box = quantity[p1]#*exchange[p1]
+        quantity_box = quantity[p1]  # *exchange[p1]
 
         for i, value in enumerate(set_artnum_box):
             p = np.where(value == artnum_box)[0]
@@ -663,35 +899,43 @@ class Start(tk.Frame):
         set_artnum = np.array(list(set(list(artnum))))
         set_exchange = np.zeros(len(set_artnum))
         set_cost = np.zeros(len(set_artnum))
-        set_description = np.full(len(set_artnum), '', dtype='U100')
+        set_description = np.full(len(set_artnum), "", dtype="U100")
         sum_quantity = np.zeros(len(set_artnum))
         if not self.controller.checkbox_var.get():
             for i in range(len(set_artnum)):
                 p = np.where(set_artnum[i] == artnum)[0]
-                p = np.delete(p, spot[p] == 'FLAK' )
-                p = np.delete(p, spot[p] == 'nan' )
-                p = np.delete(p, spot[p] == 'A' ) #skrotgården
-                p = np.delete(p, spot[p] == 'D' )
-                p = np.delete(p, spot[p] == 'Z' )
-                p = np.delete(p, spot[p] == 'S' )
-                p = np.delete(p, spot[p] == 'T' )
-                p = np.delete(p, exact_spot[p] == 'F100')
-                p = np.delete(p, [i for i, val in enumerate(exact_spot[p]) if 'FLAK' in val])
-                p = np.delete(p, [i for i, val in enumerate(exact_spot[p]) if 'VÅG' in val])
+                p = np.delete(p, spot[p] == "FLAK")
+                p = np.delete(p, spot[p] == "nan")
+                p = np.delete(p, spot[p] == "A")  # skrotgården
+                p = np.delete(p, spot[p] == "D")
+                p = np.delete(p, spot[p] == "Z")
+                p = np.delete(p, spot[p] == "S")
+                p = np.delete(p, spot[p] == "T")
+                p = np.delete(p, exact_spot[p] == "F100")
+                p = np.delete(
+                    p, [i for i, val in enumerate(exact_spot[p]) if "FLAK" in val]
+                )
+                p = np.delete(
+                    p, [i for i, val in enumerate(exact_spot[p]) if "VÅG" in val]
+                )
 
                 if p.size > 0:
                     set_exchange[i] = exchange[p[0]]
                     set_cost[i] = cost[p[0]]
                     set_description[i] = description[p[0]]
                     sum_quantity[i] = np.sum(quantity[p])
-            set_artnum = np.delete(set_artnum, sum_quantity==0)
-            set_exchange = np.delete(set_exchange, sum_quantity==0)
-            set_cost = np.delete(set_cost, sum_quantity==0)
-            set_description = np.delete(set_description, sum_quantity==0)
-            sum_quantity = np.delete(sum_quantity, sum_quantity==0)
+            set_artnum = np.delete(set_artnum, sum_quantity == 0)
+            set_exchange = np.delete(set_exchange, sum_quantity == 0)
+            set_cost = np.delete(set_cost, sum_quantity == 0)
+            set_description = np.delete(set_description, sum_quantity == 0)
+            sum_quantity = np.delete(sum_quantity, sum_quantity == 0)
 
-            for value in list(self.controller.boxes.keys()): #lägger in resten av material i boxlager
-                self.controller.boxes[f'{value}rest'] = sum_quantity[set_artnum == value] - np.sum(self.controller.boxes[value])
+            for value in list(
+                self.controller.boxes.keys()
+            ):  # lägger in resten av material i boxlager
+                self.controller.boxes[f"{value}rest"] = sum_quantity[
+                    set_artnum == value
+                ] - np.sum(self.controller.boxes[value])
         else:
             for i in range(len(set_artnum)):
                 p = np.where(set_artnum[i] == artnum)[0]
@@ -701,17 +945,18 @@ class Start(tk.Frame):
                     set_cost[i] = cost[p[0]]
                     set_description[i] = description[p[0]]
 
-            set_artnum = np.delete(set_artnum, set_exchange==0)
-            set_cost = np.delete(set_cost, set_exchange==0)
-            set_description = np.delete(set_description, set_exchange==0)
-            set_exchange = np.delete(set_exchange, set_exchange==0)
+            set_artnum = np.delete(set_artnum, set_exchange == 0)
+            set_cost = np.delete(set_cost, set_exchange == 0)
+            set_description = np.delete(set_description, set_exchange == 0)
+            set_exchange = np.delete(set_exchange, set_exchange == 0)
             sum_quantity = np.full(len(set_artnum), 1e10)
-            
+
         self.set_artnum_inventory = set_artnum
         self.set_exchange = set_exchange
         self.set_cost = set_cost
         self.set_description = set_description
         self.sum_quantity = sum_quantity
+
     def compare(self, _event=None):
         shared_artnum = np.intersect1d(self.set_artnum_p, self.set_artnum_inventory)
 
@@ -720,14 +965,16 @@ class Start(tk.Frame):
 
         self.set_artnum_inventory = self.set_artnum_inventory[b2]
         self.set_exchange = self.set_exchange[b2]
-        self.set_cost = self.set_cost [b2]
+        self.set_cost = self.set_cost[b2]
         self.set_description = self.set_description[b2]
         self.sum_quantity = self.sum_quantity[b2]
 
         self.set_artnum_p = self.set_artnum_p[b1]
         self.set_artnum = self.set_artnum[b1]
 
-        sort_index = np.argsort([np.where(self.set_artnum_p == x)[0][0] for x in self.set_artnum_inventory]) #tar fram i vilken ordning det ska sorteras enligt set_artnum_p
+        sort_index = np.argsort(
+            [np.where(self.set_artnum_p == x)[0][0] for x in self.set_artnum_inventory]
+        )  # tar fram i vilken ordning det ska sorteras enligt set_artnum_p
 
         self.set_artnum_inventory = self.set_artnum_inventory[sort_index]
         self.set_exchange = self.set_exchange[sort_index]
@@ -743,7 +990,7 @@ class Start(tk.Frame):
         self.controller.all_test_std = self.controller.all_test_std[b1, :]
 
     def prepare(self, _event=None):
-        #fördimensionerar listor där data per recept sätts in i varje posistion i listan
+        # fördimensionerar listor där data per recept sätts in i varje posistion i listan
         n = len(self.controller.text_list1.get(0, tk.END))
         A = [None] * n
         b = [None] * n
@@ -752,10 +999,10 @@ class Start(tk.Frame):
         beq = [None] * n
         bound = [None] * n
 
-        #läser in och strukturerar manuella globala regler 
-        mr_A_add_on = np.empty((0,len(self.set_artnum_p)))
+        # läser in och strukturerar manuella globala regler
+        mr_A_add_on = np.empty((0, len(self.set_artnum_p)))
         mr_b_add_on = np.empty(0)
-        mr_Aeq_add_on = np.empty((0,len(self.set_artnum_p)))
+        mr_Aeq_add_on = np.empty((0, len(self.set_artnum_p)))
         mr_beq_add_on = np.empty(0)
         modified_cost = self.set_cost.copy()
 
@@ -764,39 +1011,44 @@ class Start(tk.Frame):
             mr_command = []
             mr_amount = []
             manual_rule = self.controller.text_list2.get(0, tk.END)
-            for i in range(0,len(manual_rule)):
+            for i in range(0, len(manual_rule)):
                 mr_artnum.append(manual_rule[i].strip().split()[0].upper())
                 mr_command.append(manual_rule[i].strip().split()[1].upper())
                 if len(manual_rule[i].strip().split()) > 2:
                     mr_amount.append(manual_rule[i].strip().split()[2].upper())
                 else:
                     mr_amount.append(0)
-            mr_amount = [float(x) if x != '' else 0.0 for x in mr_amount]            
-            for i in range(0,len(mr_artnum)):
-                if mr_command[i] == 'MAX' or mr_command[i] == 'MIN':
+            mr_amount = [float(x) if x != "" else 0.0 for x in mr_amount]
+
+            for i in range(0, len(mr_artnum)):
+                if mr_command[i] == "MAX" or mr_command[i] == "MIN":
                     mr_A_add = np.zeros(len(self.set_artnum_p))
                     mr_A_add[mr_artnum[i] == self.set_artnum_p] = 1
                     mr_b_add = np.array([mr_amount[i]])
                     if np.any(mr_A_add == 1):
-                        mr_A_add = mr_A_add * (-1) if mr_command[i] == 'MIN' else mr_A_add
-                        mr_b_add = mr_b_add * (-1) if mr_command[i] == 'MIN' else mr_b_add
+                        mr_A_add = (
+                            mr_A_add * (-1) if mr_command[i] == "MIN" else mr_A_add
+                        )
+                        mr_b_add = (
+                            mr_b_add * (-1) if mr_command[i] == "MIN" else mr_b_add
+                        )
                         mr_A_add_on = np.vstack((mr_A_add_on, mr_A_add))
                         mr_b_add_on = np.concatenate((mr_b_add_on, mr_b_add))
-                if mr_command[i] == '=':
+                if mr_command[i] == "=":
                     mr_Aeq_add = np.zeros(len(self.set_artnum_p))
                     mr_beq_add = np.array([mr_amount[i]])
                     mr_Aeq_add[mr_artnum[i] == self.set_artnum_p] = 1
                     if np.any(mr_Aeq_add == 1):
                         mr_Aeq_add_on = np.vstack((mr_Aeq_add_on, mr_Aeq_add))
                         mr_beq_add_on = np.concatenate((mr_beq_add_on, mr_beq_add))
-                if mr_command[i] == 'COST0':
+                if mr_command[i] == "COST0":
                     modified_cost[mr_artnum[i] == self.set_artnum_p] = 0
 
-        max_amount_A = np.ones((1, len(self.set_artnum_p)))/self.set_exchange
-        #läser in och strukturerar manuella lokala regler
-        lmr_A_add_on = [np.empty((0,len(self.set_artnum_p))) for _ in range(n)]
+        max_amount_A = np.ones((1, len(self.set_artnum_p))) / self.set_exchange
+        # läser in och strukturerar manuella lokala regler
+        lmr_A_add_on = [np.empty((0, len(self.set_artnum_p))) for _ in range(n)]
         lmr_b_add_on = [np.empty(0) for _ in range(n)]
-        lmr_Aeq_add_on = [np.empty((0,len(self.set_artnum_p))) for _ in range(n)]
+        lmr_Aeq_add_on = [np.empty((0, len(self.set_artnum_p))) for _ in range(n)]
         lmr_beq_add_on = [np.empty(0) for _ in range(n)]
         temp = modified_cost
         modified_cost = [temp.copy() for _ in range(n)]
@@ -804,64 +1056,111 @@ class Start(tk.Frame):
         choose_std = [np.empty(0, dtype=int) for _ in range(n)]
         choose_std_value = [np.empty(0) for _ in range(n)]
         if self.controller.lr_dict:
-            for i in range(0,n):
+            for i in range(0, n):
                 if i in self.controller.lr_dict:
                     lmr_artnum = []
                     lmr_command = []
                     lmr_amount = []
                     lmr = self.controller.lr_dict[i]
-                    elem = ['Si', 'Fe', 'Cu', 'Mn', 'Mg', 'Ni', 'Zn', 'Ti', 'Pb', 'Sn', 'Cr', 'Na', 'Sr','Sb', 'P', 'Bi', 'Ca', 'Cd', 'Zr', 'Be', 'B', 'Li', 'Al', 'Hg']
+                    elem = [
+                        "Si",
+                        "Fe",
+                        "Cu",
+                        "Mn",
+                        "Mg",
+                        "Ni",
+                        "Zn",
+                        "Ti",
+                        "Pb",
+                        "Sn",
+                        "Cr",
+                        "Na",
+                        "Sr",
+                        "Sb",
+                        "P",
+                        "Bi",
+                        "Ca",
+                        "Cd",
+                        "Zr",
+                        "Be",
+                        "B",
+                        "Li",
+                        "Al",
+                        "Hg",
+                    ]
                     elem = [e.upper() for e in elem]
-                    for j in range(0,len(lmr)):
+                    for j in range(0, len(lmr)):
                         lmr_artnum.append(lmr[j].strip().split()[0].upper())
                         lmr_command.append(lmr[j].strip().split()[1].upper())
                         if len(lmr[j].strip().split()) > 2:
                             lmr_amount.append(lmr[j].strip().split()[2].upper())
                         else:
                             lmr_amount.append(0)
-                    lmr_A_add_on[i] = np.zeros((len(lmr_artnum), len(self.set_artnum_p)))
+                    lmr_A_add_on[i] = np.zeros(
+                        (len(lmr_artnum), len(self.set_artnum_p))
+                    )
                     lmr_b_add_on[i] = np.zeros(len(lmr_artnum))
 
-                    lmr_Aeq_add_on[i] = np.zeros((len(lmr_artnum), len(self.set_artnum_p)))
-                    lmr_beq_add_on[i] = np.zeros(len(lmr_artnum)) 
+                    lmr_Aeq_add_on[i] = np.zeros(
+                        (len(lmr_artnum), len(self.set_artnum_p))
+                    )
+                    lmr_beq_add_on[i] = np.zeros(len(lmr_artnum))
 
-                    for k in range(0,len(lmr_artnum)):
-                        lmr_amount = [float(x) if x != '' else 0.0 for x in lmr_amount]
-                        if lmr_command[k] == 'MAX' or lmr_command[k] == 'MIN':
+                    for k in range(0, len(lmr_artnum)):
+                        lmr_amount = [float(x) if x != "" else 0.0 for x in lmr_amount]
+                        if lmr_command[k] == "MAX" or lmr_command[k] == "MIN":
                             p = np.where(lmr_artnum[k] == self.set_artnum_p)[0]
                             if p.size > 0:
-                                lmr_A_add_on[i][k][p] = 1 if lmr_command[k] == 'MAX' else -1
-                                lmr_b_add_on[i][k] = lmr_amount[k] if lmr_command[k] == 'MAX' else lmr_amount[k]*(-1)
-                        if lmr_command[k] == '=':
+                                lmr_A_add_on[i][k][p] = (
+                                    1 if lmr_command[k] == "MAX" else -1
+                                )
+                                lmr_b_add_on[i][k] = (
+                                    lmr_amount[k]
+                                    if lmr_command[k] == "MAX"
+                                    else lmr_amount[k] * (-1)
+                                )
+                        if lmr_command[k] == "=":
                             p = np.where(lmr_artnum[k] == self.set_artnum_p)[0]
                             if p.size > 0:
                                 lmr_Aeq_add_on[i][k][p] = 1
                                 lmr_beq_add_on[i][k] = lmr_amount[k]
-                        if lmr_command[k] == 'COST0':
+                        if lmr_command[k] == "COST0":
                             modified_cost[i][lmr_artnum[k] == self.set_artnum_p] = 0
-                        if lmr_command[k] == 'ALLOW':
+                        if lmr_command[k] == "ALLOW":
                             rule_override[i][lmr_artnum[k] == self.set_artnum_p] = True
                         if lmr_artnum[k] in elem:
                             p = np.where(lmr_artnum[k] == np.array(elem))[0]
-                            temp = lmr_command[k].replace(',', '.')
+                            temp = lmr_command[k].replace(",", ".")
                             choose_std[i] = np.hstack((choose_std[i], p))
-                            choose_std_value[i] = np.hstack((choose_std_value[i], float(temp)/100))
+                            choose_std_value[i] = np.hstack(
+                                (choose_std_value[i], float(temp) / 100)
+                            )
 
         A_add_on_i = [self.A_add_on.copy() for _ in range(n)]
         for i in range(n):
             A_add_on_i[i][:, rule_override[i]] = 0
-        #sätter max lager för flera recept (bygg A senare när vi vet antal slackvariabler per recept)
+        # sätter max lager för flera recept (bygg A senare när vi vet antal slackvariabler per recept)
         inventory_b_addon = self.sum_quantity.copy()
         M_sizes = [0] * n
-    
-        selected_test_std = [np.empty((0,len(self.set_artnum_p))) for _ in range(n)]
+
+        selected_test_std = [np.empty((0, len(self.set_artnum_p))) for _ in range(n)]
         selected_test_std_value = [np.empty(0) for _ in range(n)]
         for i in range(n):
             for j in range(choose_std[i].shape[0]):
-                selected_test_std[i] = np.vstack((selected_test_std[i], np.power(self.controller.all_test_std[:,choose_std[i][j]], 2)))
-                selected_test_std_value[i] = np.hstack((selected_test_std_value[i], np.power(choose_std_value[i][j]*100/2, 2) * self.controller.cp_dict['weight_out'][i]))
+                selected_test_std[i] = np.vstack(
+                    (
+                        selected_test_std[i],
+                        np.power(self.controller.all_test_std[:, choose_std[i][j]], 2),
+                    )
+                )
+                selected_test_std_value[i] = np.hstack(
+                    (
+                        selected_test_std_value[i],
+                        np.power(choose_std_value[i][j] * 100 / 2, 2)
+                        * self.controller.cp_dict["weight_out"][i],
+                    )
+                )
 
-                
         # Läs vikter för slack-variabler (Alternativ B)
         try:
             lambda_u = float(self.controller.lambda_u_var.get())
@@ -872,11 +1171,11 @@ class Start(tk.Frame):
         except Exception:
             lambda_v = 1e6
 
-        for i in range(0,n): #bygger listor med ett recept per position
+        for i in range(0, n):  # bygger listor med ett recept per position
             # Sannolikhets-variance-caps per recept (exkl. 4 och 22)
             A_probcap_i = np.empty((0, len(self.set_artnum_p)))
             b_probcap_i = np.empty(0)
-            if hasattr(self.controller, 'prob_caps') and i in self.controller.prob_caps:
+            if hasattr(self.controller, "prob_caps") and i in self.controller.prob_caps:
                 for e, rhs in self.controller.prob_caps[i].items():
                     if e in (4, 22):
                         continue
@@ -884,52 +1183,70 @@ class Start(tk.Frame):
                     A_probcap_i = np.vstack((A_probcap_i, row))
                     b_probcap_i = np.hstack((b_probcap_i, rhs))
 
-            A[i] = np.transpose(self.set_mean_final) 
-            A[i] = np.vstack((A[i], A[i]*(-1)))
+            A[i] = np.transpose(self.set_mean_final)
+            A[i] = np.vstack((A[i], A[i] * (-1)))
             A[i] = np.vstack((A[i], selected_test_std[i]))
-            A[i] = np.vstack((A[i], A_add_on_i[i]/self.set_exchange))
-            A[i] = np.vstack((A[i], mr_A_add_on/self.set_exchange))
-            A[i] = np.vstack((A[i], lmr_A_add_on[i]/self.set_exchange))
+            A[i] = np.vstack((A[i], A_add_on_i[i] / self.set_exchange))
+            A[i] = np.vstack((A[i], mr_A_add_on / self.set_exchange))
+            A[i] = np.vstack((A[i], lmr_A_add_on[i] / self.set_exchange))
             # Alternativ B: använd cap-equalities med slack u/v (lägger till kolumner senare i Aeq)
             Mi = A_probcap_i.shape[0]
             M_sizes[i] = Mi
             if Mi > 0:
-                A[i] = np.hstack((A[i], np.zeros((A[i].shape[0], 2*Mi))))
-                max_amount_ext = np.hstack((max_amount_A, np.zeros((max_amount_A.shape[0], 2*Mi))))
+                A[i] = np.hstack((A[i], np.zeros((A[i].shape[0], 2 * Mi))))
+                max_amount_ext = np.hstack(
+                    (max_amount_A, np.zeros((max_amount_A.shape[0], 2 * Mi)))
+                )
             else:
                 max_amount_ext = max_amount_A
             A[i] = np.vstack((A[i], max_amount_ext))
-            b[i] = self.controller.cp_dict['tol_max'][i] * self.controller.cp_dict['weight_out'][i]
-            b[i] = np.hstack((b[i], self.controller.cp_dict['tol_min'][i] *(-1) * self.controller.cp_dict['weight_out'][i]))
+            b[i] = (
+                self.controller.cp_dict["tol_max"][i]
+                * self.controller.cp_dict["weight_out"][i]
+            )
+            b[i] = np.hstack(
+                (
+                    b[i],
+                    self.controller.cp_dict["tol_min"][i]
+                    * (-1)
+                    * self.controller.cp_dict["weight_out"][i],
+                )
+            )
             b[i] = np.hstack((b[i], selected_test_std_value[i]))
             b[i] = np.hstack((b[i], self.b_add_on))
             b[i] = np.hstack((b[i], mr_b_add_on))
             b[i] = np.hstack((b[i], lmr_b_add_on[i]))
-            b[i] = np.hstack((b[i], np.array([self.controller.cp_dict['weight_in'][i]])))
+            b[i] = np.hstack(
+                (b[i], np.array([self.controller.cp_dict["weight_in"][i]]))
+            )
             Aeq[i] = np.ones((1, (len(self.set_artnum_p))))
-            Aeq[i] = np.vstack((Aeq[i], mr_Aeq_add_on/self.set_exchange))
-            Aeq[i] = np.vstack((Aeq[i], lmr_Aeq_add_on[i]/self.set_exchange))
-            beq[i] = np.array([self.controller.cp_dict['weight_out'][i]])
+            Aeq[i] = np.vstack((Aeq[i], mr_Aeq_add_on / self.set_exchange))
+            Aeq[i] = np.vstack((Aeq[i], lmr_Aeq_add_on[i] / self.set_exchange))
+            beq[i] = np.array([self.controller.cp_dict["weight_out"][i]])
             beq[i] = np.hstack((beq[i], mr_beq_add_on))
             beq[i] = np.hstack((beq[i], lmr_beq_add_on[i]))
             # Alternativ B: lägg till cap-equalities i Aeq och vikta u/v i målfunktionen
             if M_sizes[i] > 0:
                 Mi = M_sizes[i]
                 # utöka befintliga eq-rader med nollor för u/v-kolumner
-                Aeq[i] = np.hstack((Aeq[i], np.zeros((Aeq[i].shape[0], 2*Mi))))
+                Aeq[i] = np.hstack((Aeq[i], np.zeros((Aeq[i].shape[0], 2 * Mi))))
                 # lägg till cap-equalities: [A_probcap_i | I | -I]
                 cap_eq = np.hstack((A_probcap_i, np.eye(Mi), -np.eye(Mi)))
                 Aeq[i] = np.vstack((Aeq[i], cap_eq))
                 beq[i] = np.hstack((beq[i], b_probcap_i))
                 # målfunktion: kostnad(x) + lambda_u*sum(u) + lambda_v*sum(v)
-                f[i] = np.hstack((modified_cost[i], np.full(Mi, lambda_u), np.full(Mi, lambda_v)))
+                f[i] = np.hstack(
+                    (modified_cost[i], np.full(Mi, lambda_u), np.full(Mi, lambda_v))
+                )
                 # bounds för x, u, v
-                bound[i] = [(0, None)] * len(self.set_mean_final) + [(0, None)] * (2*Mi)
+                bound[i] = [(0, None)] * len(self.set_mean_final) + [(0, None)] * (
+                    2 * Mi
+                )
             else:
                 f[i] = modified_cost[i]
                 bound[i] = [(0, None)] * len(self.set_mean_final)
-        
-        #utformar arrayerna för linprog
+
+        # utformar arrayerna för linprog
         A_ub = block_diag(*A)
         A_eq = block_diag(*Aeq)
         b_ub = np.concatenate(b)
@@ -942,13 +1259,13 @@ class Start(tk.Frame):
         inventory_A_addon2 = np.empty((inv_rows, 0))
         for i in range(n):
             Mi = M_sizes[i]
-            extra = np.zeros((inv_rows, 2*Mi))
+            extra = np.zeros((inv_rows, 2 * Mi))
             block = np.hstack((inventory_A_add, extra))
             inventory_A_addon2 = np.hstack((inventory_A_addon2, block))
         A_ub = np.vstack((A_ub, inventory_A_addon2))
         b_ub = np.concatenate((b_ub, inventory_b_addon))
 
-        #skapar exceldokument för felsökning
+        # skapar exceldokument för felsökning
         # L = [A_ub, A_eq, b_ub, b_eq, func, bounds]
         # for i, arr in enumerate(L, start=1):
         #     if arr.ndim == 1:
@@ -956,26 +1273,43 @@ class Start(tk.Frame):
         #     df = pd.DataFrame(arr)
         #     df.to_excel(f"array_{i}.xlsx", index=False)
 
-        result = linprog(func, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds)
+        result = linprog(
+            func, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq, bounds=bounds
+        )
 
         self.controller.success_bool = result.success
         if not self.controller.success_bool:
-            result_bol = np.zeros(n, dtype=bool)  
-            for i in range(0,n): #bygger listor med ett recept per position
+            result_bol = np.zeros(n, dtype=bool)
+            for i in range(0, n):  # bygger listor med ett recept per position
                 Mi = M_sizes[i]
-                inv_block_i = np.hstack((np.eye(len(self.set_artnum_p)), np.zeros((len(self.set_artnum_p), 2*Mi))))
-                result_test = linprog(f[i], A_ub=np.vstack((A[i], inv_block_i)), b_ub=np.concatenate((b[i], inventory_b_addon)), A_eq=Aeq[i], b_eq=beq[i], bounds=bound[i])
+                inv_block_i = np.hstack(
+                    (
+                        np.eye(len(self.set_artnum_p)),
+                        np.zeros((len(self.set_artnum_p), 2 * Mi)),
+                    )
+                )
+                result_test = linprog(
+                    f[i],
+                    A_ub=np.vstack((A[i], inv_block_i)),
+                    b_ub=np.concatenate((b[i], inventory_b_addon)),
+                    A_eq=Aeq[i],
+                    b_eq=beq[i],
+                    bounds=bound[i],
+                )
                 result_bol[i] = result_test.success
             non_possible = np.array(list(range(n)))[~result_bol]
             # --- OPTIX_SUPPRESS_ERRORS START --- (ändring) - visa inte fel vid interna justeringsförsök
-            if not getattr(self.controller, 'suppress_errors', False):
+            if not getattr(self.controller, "suppress_errors", False):
                 if False in result_bol:
-                    messagebox.showerror('Error', f'Index {", ".join(map(str, non_possible))} can not be created.')
+                    messagebox.showerror(
+                        "Error",
+                        f'Index {", ".join(map(str, non_possible))} can not be created.',
+                    )
                 else:
-                    messagebox.showerror('Error', 'The combination can not be created')
+                    messagebox.showerror("Error", "The combination can not be created")
             # --- OPTIX_SUPPRESS_ERRORS END ---
 
-        self.rec_['n'] = n
+        self.rec_["n"] = n
         if result.success:
             rec_artnum = [None] * n
             rec_amount = [None] * n
@@ -990,8 +1324,8 @@ class Start(tk.Frame):
             cur = 0
             for i2 in range(n):
                 block_starts.append(cur)
-                cur += len(self.set_artnum_p) + 2*M_sizes[i2]
-            for i in range(0,n):
+                cur += len(self.set_artnum_p) + 2 * M_sizes[i2]
+            for i in range(0, n):
                 start = block_starts[i]
                 end = start + len(self.set_artnum_p)
                 xi = result.x[start:end]
@@ -999,80 +1333,130 @@ class Start(tk.Frame):
                 rec_artnum[i] = self.set_artnum_p[p]
                 rec_description[i] = self.set_description[p]
                 rec_amount[i] = xi[p]
-                rec_scrap_amount[i] = (xi/self.set_exchange)[p]
-                rec_scrap_result_x[i] = xi/self.set_exchange 
+                rec_scrap_amount[i] = (xi / self.set_exchange)[p]
+                rec_scrap_result_x[i] = xi / self.set_exchange
                 rec_result_x[i] = xi
 
-                rec_alloy[i] = np.sum(np.atleast_2d(np.squeeze(self.set_mean_final[p,:] * rec_amount[i][:, np.newaxis])), axis=0) / self.controller.cp_dict['weight_out'][i]
-                
+                rec_alloy[i] = (
+                    np.sum(
+                        np.atleast_2d(
+                            np.squeeze(
+                                self.set_mean_final[p, :] * rec_amount[i][:, np.newaxis]
+                            )
+                        ),
+                        axis=0,
+                    )
+                    / self.controller.cp_dict["weight_out"][i]
+                )
+
             self.rec_artnum = rec_artnum
-            self.rec_amount = rec_amount    
-            self.rec_['artnum'] = rec_artnum
-            self.rec_['amount'] = rec_amount
-            self.rec_['scrap_amount'] = rec_scrap_amount
-            self.rec_['alloy'] = rec_alloy
-            self.rec_['rec_scrap_result_x'] = rec_scrap_result_x
-            self.rec_['rec_result_x'] = rec_result_x
-            self.rec_['cost'] = self.set_cost
-            self.rec_['set_description'] = self.set_description
-            self.rec_['set_artnum_p'] = self.set_artnum_p
-            self.rec_['rec_description'] = rec_description
+            self.rec_amount = rec_amount
+            self.rec_["artnum"] = rec_artnum
+            self.rec_["amount"] = rec_amount
+            self.rec_["scrap_amount"] = rec_scrap_amount
+            self.rec_["alloy"] = rec_alloy
+            self.rec_["rec_scrap_result_x"] = rec_scrap_result_x
+            self.rec_["rec_result_x"] = rec_result_x
+            self.rec_["cost"] = self.set_cost
+            self.rec_["set_description"] = self.set_description
+            self.rec_["set_artnum_p"] = self.set_artnum_p
+            self.rec_["rec_description"] = rec_description
             self.first_run = False
 
-    def success_procent(self, index):
+    def success_procent(self, index, W=None):
         # std enligt SOCP-modell: sqrt(sum_j (sigma^2 * (x/W)^2))
-        p = np.where(self.controller.rec_['rec_result_x'][index] != 0)
+        if W is None:
+            W = self.controller.cp_dict["weight_out"][index]
+        p = np.where(self.controller.rec_["rec_result_x"][index] != 0)
         test_std = self.controller.all_test_std[p, :][0]
-        rec_result = self.controller.rec_['rec_result_x'][index][p]
-        W = self.controller.cp_dict['weight_out'][index]
+        rec_result = self.controller.rec_["rec_result_x"][index][p]
 
-        ratio = (rec_result[:, np.newaxis] / W)
-        var_e = np.sum((ratio ** 2) * (test_std ** 2), axis=0)
+        ratio = rec_result[:, np.newaxis] / W
+        var_e = np.sum((ratio**2) * (test_std**2), axis=0)
         sum_weighted_std = np.sqrt(var_e)
 
         # bidragsvärden för UI-rekommendationer: (x/W)*sigma per komponent/element
         contrib = ratio * test_std  # shape: (#used, 24)
 
         p0 = np.where(np.all(test_std == 0, axis=1))[0]
-        alloy = self.controller.rec_['alloy'][index].copy()
+        alloy = self.controller.rec_["alloy"][index].copy()
         amount = rec_result[p0] / W if p0.size > 0 else np.array([])
-        an = self.controller.rec_['artnum'][index][p0] if p0.size > 0 else np.array([])
+        an = self.controller.rec_["artnum"][index][p0] if p0.size > 0 else np.array([])
         for i in range(len(an)):
-            p2 = np.where(an[i] == self.controller.testing_dict['set_artnum_p'])[0]
-            alloy -= ((self.controller.testing_dict['set_mean_final'][p2,:]) * amount[i]).reshape(24,)
+            p2 = np.where(an[i] == self.controller.testing_dict["set_artnum_p"])[0]
+            alloy -= (
+                (self.controller.testing_dict["set_mean_final"][p2, :]) * amount[i]
+            ).reshape(
+                24,
+            )
 
-        prob = norm.cdf(self.controller.cp_dict['outer_max'][index][0:23], loc=alloy[0:23], scale=sum_weighted_std[0:23])
+        prob = norm.cdf(
+            self.controller.cp_dict["outer_max"][index][0:23],
+            loc=alloy[0:23],
+            scale=sum_weighted_std[0:23],
+        )
         prob = np.append(prob, np.float64(1.0))
-        self.controller.succ_dict[index] = (np.prod(np.delete(np.array(prob), [4, 22])), prob, contrib)
+        self.controller.succ_dict[index] = (
+            np.prod(np.delete(np.array(prob), [4, 22])),
+            prob,
+            contrib,
+        )
 
     def cost_calculator(self, index):
-        p = np.where(self.controller.rec_['rec_result_x'][index] != 0)[0]
-        self.controller.cost_dict[index] = np.sum(self.controller.rec_['cost'][p] * self.controller.rec_['rec_result_x'][index][p])
-        self.controller.cost_dict[f"{index}/kg"] = np.sum(self.controller.rec_['cost'][p] * self.controller.rec_['rec_result_x'][index][p])/self.controller.cp_dict['weight_out'][index]
+        p = np.where(self.controller.rec_["rec_result_x"][index] != 0)[0]
+        self.controller.cost_dict[index] = np.sum(
+            self.controller.rec_["cost"][p]
+            * self.controller.rec_["rec_result_x"][index][p]
+        )
+        self.controller.cost_dict[f"{index}/kg"] = (
+            np.sum(
+                self.controller.rec_["cost"][p]
+                * self.controller.rec_["rec_result_x"][index][p]
+            )
+        / self.controller.cp_dict["weight_out"][index]
 
-    
+    )
+
+    def _calculate_succ_cost(self):
+        setattr(self.controller, self.rec_key, self.rec_)
+        self.controller.succ_dict = {}
+        self.controller.cost_dict = {}
+        for i in range(len(self.rec_["artnum"])):
+            self.success_procent(index=i)
+            self.cost_calculator(index=i)
+        self.controller.cost_dict["cost_sum"] = sum(
+            self.controller.cost_dict.values()
+        )
+
     def socp_optimize(self):
         # cvxpy krävs
         if cp is None:
-            messagebox.showerror('SOCP saknas', 'cvxpy kunde inte importeras. Installera cvxpy och en lösare (t.ex. ECOS) för att använda SOCP-läget.')
-            raise RuntimeError('cvxpy not available')
+            messagebox.showerror(
+                "SOCP saknas",
+                "cvxpy kunde inte importeras. Installera cvxpy och en lösare (t.ex. ECOS) för att använda SOCP-läget.",
+            )
+            raise RuntimeError("cvxpy not available")
 
         # Data
         n = len(self.controller.text_list1.get(0, tk.END))
         m = len(self.set_artnum_p)
         cost_base = self.set_cost.copy()
-        W = [float(self.controller.cp_dict['weight_out'][i]) for i in range(n)]
-        tol_max = self.controller.cp_dict['tol_max']
-        tol_min = self.controller.cp_dict['tol_min']
-        outer_max = self.controller.cp_dict['outer_max']
+        W = [float(self.controller.cp_dict["weight_out"][i]) for i in range(n)]
+        tol_max = self.controller.cp_dict["tol_max"]
+        tol_min = self.controller.cp_dict["tol_min"]
+        outer_max = self.controller.cp_dict["outer_max"]
         mu_all = self.set_mean_final  # (m,24)
         sigma_all = self.controller.all_test_std  # (m,24)
 
         # Solver-val
-        solver_name = getattr(self.controller, 'socp_solver_var', None).get() if hasattr(self.controller, 'socp_solver_var') else 'SCS'
-        solver_map = {'ECOS': cp.ECOS, 'SCS': cp.SCS}
+        solver_name = (
+            getattr(self.controller, "socp_solver_var", None).get()
+            if hasattr(self.controller, "socp_solver_var")
+            else "SCS"
+        )
+        solver_map = {"ECOS": cp.ECOS, "SCS": cp.SCS}
         solver = solver_map.get(solver_name, cp.SCS)
-        if solver_name == 'MOSEK':
+        if solver_name == "MOSEK":
             try:
                 solver = cp.MOSEK
             except Exception:
@@ -1080,7 +1464,7 @@ class Start(tk.Frame):
 
         # z från target
         try:
-            target_prob = float(self.controller.target_pct_var.get())/100.0
+            target_prob = float(self.controller.target_pct_var.get()) / 100.0
         except Exception:
             target_prob = 0.70
         K = len([e for e in range(24) if e not in (4, 22)])
@@ -1089,46 +1473,59 @@ class Start(tk.Frame):
 
         # Variabler
         x_vars = [cp.Variable(m, nonneg=True) for _ in range(n)]
+        t_vars = [cp.Variable() for _ in range(n)]  # cost per kg
+        # Slack variables for SOCP norms: t_socp[i][e_idx] >= norm(sigma * x)
+        t_socp = [[cp.Variable(nonneg=True) for _ in range(23)] for _ in range(n)]
         constraints = []
-        obj_terms = []
+        obj_terms = t_vars  # minimize sum of t_i
 
         # Globala regler
         global_cost_zero_idx = set()
         global_limits = []  # (typ, j, val)
-        manual_rule = list(self.controller.text_list2.get(0, tk.END)) if hasattr(self.controller, 'text_list2') else []
+        manual_rule = (
+            list(self.controller.text_list2.get(0, tk.END))
+            if hasattr(self.controller, "text_list2")
+            else []
+        )
         for s in manual_rule:
             parts = s.strip().split()
             if len(parts) < 2:
                 continue
             art = parts[0].upper()
             cmd = parts[1].upper()
-            amt = float(parts[2].replace(',', '.')) if len(parts) > 2 else 0.0
+            amt = float(parts[2].replace(",", ".")) if len(parts) > 2 else 0.0
             idx = np.where(self.set_artnum_p == art)[0]
-            if idx.size == 0 and art.endswith('P'):
-                idx = np.where(self.set_artnum_p.astype('U16') == art)[0]
+            if idx.size == 0 and art.endswith("P"):
+                idx = np.where(self.set_artnum_p.astype("U16") == art)[0]
             if idx.size == 0:
                 continue
             j = int(idx[0])
-            if cmd == 'COST0':
+            if cmd == "COST0":
                 global_cost_zero_idx.add(j)
-            elif cmd in ('MAX','MIN','='):
+            elif cmd in ("MAX", "MIN", "="):
                 val = amt * float(self.set_exchange[j])
-                if cmd == 'MAX':
-                    global_limits.append(('<=', j, val))
-                elif cmd == 'MIN':
-                    global_limits.append(('>=', j, val))
+                if cmd == "MAX":
+                    global_limits.append(("<=", j, val))
+                elif cmd == "MIN":
+                    global_limits.append((">=", j, val))
                 else:
-                    global_limits.append(('==', j, val))
+                    global_limits.append(("==", j, val))
+
+
 
         # Inventory
         for j in range(m):
-            constraints.append(cp.sum([x_vars[i][j] for i in range(n)]) <= float(self.sum_quantity[j]))
+            constraints.append(
+                cp.sum([x_vars[i][j] for i in range(n)]) <= float(self.sum_quantity[j])
+            )
 
         # Per recept
         for i in range(n):
             x = x_vars[i]
             # Viktbalans
-            constraints.append(cp.sum(x) == W[i])
+            weight_var = cp.sum(x)
+            constraints.append(weight_var <= W[i])
+            constraints.append(weight_var >= 0.9 * W[i])
             # Toleranser
             for e in range(24):
                 mu = mu_all[:, e]
@@ -1142,51 +1539,80 @@ class Start(tk.Frame):
                     continue
                 mu = mu_all[:, e]
                 sigma = sigma_all[:, e]
-                constraints.append(mu @ x + z * cp.norm(cp.multiply(sigma, x), 2) <= W[i] * float(outer_max[i][e]))
+                constraints.append(
+                    mu @ x + z * cp.norm(cp.multiply(sigma, x), 2)
+                    <= W[i] * float(outer_max[i][e])
+                )
             # Add probability caps if present
-            if hasattr(self.controller, 'prob_caps') and i in self.controller.prob_caps:
+            if hasattr(self.controller, "prob_caps") and i in self.controller.prob_caps:
                 for e, rhs in self.controller.prob_caps[i].items():
                     row = sigma_all[:, e] ** 2
                     constraints.append(cp.sum(cp.multiply(row, x)) <= rhs)
-            # Globala gränser
-            for typ, j, val in global_limits:
-                if typ == '<=':
-                    constraints.append(x[j] <= val)
-                elif typ == '>=':
-                    constraints.append(x[j] >= val)
-                else:
-                    constraints.append(x[j] == val)
             # Lokala regler
-            local_rules = self.controller.lr_dict.get(i, []) if hasattr(self.controller, 'lr_dict') and isinstance(self.controller.lr_dict, dict) else []
+            local_rules = (
+                self.controller.lr_dict.get(i, [])
+                if hasattr(self.controller, "lr_dict")
+                and isinstance(self.controller.lr_dict, dict)
+                else []
+            )
             local_cost_zero_idx = set()
             local_limits = []
+            local_allow_idx = set()
             for s in local_rules:
                 parts = s.strip().split()
                 if len(parts) < 2:
                     continue
                 art = parts[0].upper()
                 cmd = parts[1].upper()
-                amt = float(parts[2].replace(',', '.')) if len(parts) > 2 else 0.0
+                amt = float(parts[2].replace(",", ".")) if len(parts) > 2 else 0.0
                 idx = np.where(self.set_artnum_p == art)[0]
-                if idx.size == 0 and art.endswith('P'):
-                    idx = np.where(self.set_artnum_p.astype('U16') == art)[0]
+                if idx.size == 0 and art.endswith("P"):
+                    idx = np.where(self.set_artnum_p.astype("U16") == art)[0]
                 if idx.size == 0:
                     continue
                 j = int(idx[0])
-                if cmd == 'COST0':
+                if cmd == "COST0":
                     local_cost_zero_idx.add(j)
-                elif cmd in ('MAX','MIN','='):
+                elif cmd in ("MAX", "MIN", "="):
                     val = amt * float(self.set_exchange[j])
-                    if cmd == 'MAX':
-                        local_limits.append(('<=', j, val))
-                    elif cmd == 'MIN':
-                        local_limits.append(('>=', j, val))
+                    if cmd == "MAX":
+                        local_limits.append(("<=", j, val))
+                    elif cmd == "MIN":
+                        local_limits.append((">=", j, val))
                     else:
-                        local_limits.append(('==', j, val))
+                        local_limits.append(("==", j, val))
+                elif cmd == "ALLOW":
+                    local_allow_idx.add(j)
+            # Globala gränser, skipping allowed
+            recipe = self.recipe_list[i]
+            try:
+                first_segment = int(recipe.split('-')[0])
+                in_range = 40000 <= first_segment <= 44300
+            except ValueError:
+                in_range = False
+            for typ, j, val in global_limits:
+                if self.set_artnum_p[j] == '801' and not in_range:
+                    continue
+                if j not in local_allow_idx:
+                    if typ == "<=":
+                        constraints.append(x[j] <= val)
+                    elif typ == ">=":
+                        constraints.append(x[j] >= val)
+                    else:
+                        constraints.append(x[j] == val)
+
+            # Automatic MAX for 801 if in_range, skipping if allowed locally
+            if in_range:
+                try:
+                    j801 = np.where(self.set_artnum_p == '801')[0][0]
+                    if j801 not in local_allow_idx:
+                        constraints.append(x[j801] <= 0)
+                except IndexError:
+                    pass
             for typ, j, val in local_limits:
-                if typ == '<=':
+                if typ == "<=":
                     constraints.append(x[j] <= val)
-                elif typ == '>=':
+                elif typ == ">=":
                     constraints.append(x[j] >= val)
                 else:
                     constraints.append(x[j] == val)
@@ -1196,17 +1622,20 @@ class Start(tk.Frame):
                 cost_vec[list(global_cost_zero_idx)] = 0.0
             if local_cost_zero_idx:
                 cost_vec[list(local_cost_zero_idx)] = 0.0
-            obj_terms.append(cost_vec @ x)
+            cost = cost_vec @ x
+            constraints.append(cost <= t_vars[i] * weight_var)
 
         problem = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
         try:
             problem.solve(solver=solver, verbose=False)
         except Exception as err:
-            messagebox.showerror('SOCP-fel', f'Kunde inte lösa SOCP: {err}')
+            messagebox.showerror("SOCP-fel", f"Kunde inte lösa SOCP: {err}")
             raise
         if problem.status not in (cp.OPTIMAL, cp.OPTIMAL_INACCURATE):
-            messagebox.showerror('SOCP-fel', f'Lösaren returnerade status: {problem.status}')
-            raise RuntimeError('SOCP not optimal')
+            messagebox.showerror(
+                "SOCP-fel", f"Lösaren returnerade status: {problem.status}"
+            )
+            raise RuntimeError("SOCP not optimal")
 
         # Skriv tillbaka resultat
         n = len(x_vars)
@@ -1227,62 +1656,110 @@ class Start(tk.Frame):
             rec_scrap_amount[i] = (xi / self.set_exchange)[p_idx]
             rec_scrap_result_x[i] = xi / self.set_exchange
             rec_result_x[i] = xi
-            rec_alloy[i] = np.sum(np.atleast_2d(self.set_mean_final[p_idx, :] * rec_amount[i][:, np.newaxis]), axis=0) / W[i]
+        actual_W = np.sum(xi)
+        if actual_W > 0:
+            rec_alloy[i] = (
+                np.sum(
+                    np.atleast_2d(
+                        self.set_mean_final[p_idx, :] * rec_amount[i][:, np.newaxis]
+                    ),
+                    axis=0,
+                )
+                / actual_W
+            )
+        else:
+            rec_alloy[i] = np.zeros(24)
 
-        self.rec_['n'] = n
-        self.rec_['artnum'] = rec_artnum
-        self.rec_['amount'] = rec_amount
-        self.rec_['scrap_amount'] = rec_scrap_amount
-        self.rec_['alloy'] = rec_alloy
-        self.rec_['rec_scrap_result_x'] = rec_scrap_result_x
-        self.rec_['rec_result_x'] = rec_result_x
-        self.rec_['cost'] = self.set_cost
-        self.rec_['set_description'] = self.set_description
-        self.rec_['set_artnum_p'] = self.set_artnum_p
-        self.rec_['rec_description'] = rec_description
+        self.rec_["n"] = n
+        self.rec_["artnum"] = rec_artnum
+        self.rec_["amount"] = rec_amount
+        self.rec_["scrap_amount"] = rec_scrap_amount
+        self.rec_["alloy"] = rec_alloy
+        self.rec_["rec_scrap_result_x"] = rec_scrap_result_x
+        self.rec_["rec_result_x"] = rec_result_x
+        self.rec_["cost"] = self.set_cost
+        self.rec_["set_description"] = self.set_description
+        self.rec_["set_artnum_p"] = self.set_artnum_p
+        self.rec_["rec_description"] = rec_description
 
     def start_combined(self, _event=None):
-        if not (self.controller.df1.empty or self.controller.df2.empty or self.controller.df1.dropna(how='all').empty or self.controller.df2.dropna(how='all').empty):
-            if self.controller.checkbox_var.get() and self.mode == 'start':
-                inhouse_artnum = ['345', '346', '347','348', '349', '430', '431', '432', '432', '631', '632', '633', '634', '635', '636', '637', '638', '643', '690', '691', '692', '693', '694', '695', '696', '697']
+        if not (
+            self.controller.df1.empty
+            or self.controller.df2.empty
+            or self.controller.df1.dropna(how="all").empty
+            or self.controller.df2.dropna(how="all").empty
+        ):
+            if self.controller.checkbox_var.get() and self.mode == "start":
+                inhouse_artnum = [
+                    "345",
+                    "346",
+                    "347",
+                    "348",
+                    "349",
+                    "430",
+                    "431",
+                    "432",
+                    "432",
+                    "631",
+                    "632",
+                    "633",
+                    "634",
+                    "635",
+                    "636",
+                    "637",
+                    "638",
+                    "643",
+                    "690",
+                    "691",
+                    "692",
+                    "693",
+                    "694",
+                    "695",
+                    "696",
+                    "697",
+                ]
                 for item in inhouse_artnum:
-                    if item + ' max 0' not in self.controller.text_list2.get(0, tk.END):
-                        self.controller.text_list2.insert(tk.END, item + ' max 0')
-                #Tar de x första styrplanerna vid simulering        
+                    if item + " max 0" not in self.controller.text_list2.get(0, tk.END):
+                        self.controller.text_list2.insert(tk.END, item + " max 0")
+                # Tar de x första styrplanerna vid simulering
                 # for item in self.controller.set_styrplaner[0:40]:
                 #     if item not in self.controller.text_list1.get(0, tk.END):
                 #         self.controller.text_list1.insert(tk.END, item)
 
-            if self.mode == 'remake':
+            if self.mode == "remake":
                 self.controller.text_list2.delete(0, tk.END)
                 if len(self.controller.text_list3.get(0, tk.END)) > 0:
                     for item in self.controller.text_list3.get(0, tk.END):
-                        self.controller.text_list2.insert(tk.END, item)  
+                        self.controller.text_list2.insert(tk.END, item)
 
-            if self.mode == 'start':
+            if self.mode == "start":
                 self.controller.text_list3.delete(0, tk.END)
                 if len(self.controller.text_list2.get(0, tk.END)) > 0:
                     for item in self.controller.text_list2.get(0, tk.END):
-                        self.controller.text_list3.insert(tk.END, item)   
+                        self.controller.text_list3.insert(tk.END, item)
 
             # --- OPTIX_TARGET_CHANGE_RESET START --- (ändring) - om målprocent ändrats, bygg om från scratch
             def _read_target_prob_safe():
                 try:
-                    return float(self.controller.target_pct_var.get())/100.0
+                    return float(self.controller.target_pct_var.get()) / 100.0
                 except Exception:
                     return 0.70
+
             current_target = _read_target_prob_safe()
-            prev_target = getattr(self.controller, 'last_target_prob', None)
+            prev_target = getattr(self.controller, "last_target_prob", None)
             if prev_target is not None and abs(current_target - prev_target) > 1e-9:
                 # Rensa lokala regler
                 self.controller.lr_dict = {}
                 # Återställ globala regler från baseline (text_list3) om den finns
-                if hasattr(self.controller, 'text_list3') and self.controller.text_list3.size() > 0:
+                if (
+                    hasattr(self.controller, "text_list3")
+                    and self.controller.text_list3.size() > 0
+                ):
                     self.controller.text_list2.delete(0, tk.END)
                     for item in self.controller.text_list3.get(0, tk.END):
                         self.controller.text_list2.insert(tk.END, item)
                 # Rensa tabu och försök
-                if hasattr(self.controller, 'tabu_moves'):
+                if hasattr(self.controller, "tabu_moves"):
                     self.controller.tabu_moves = {}
                 self.controller.adjust_attempts = []
             # Uppdatera lagrad målprocent
@@ -1290,15 +1767,16 @@ class Start(tk.Frame):
             # --- OPTIX_TARGET_CHANGE_RESET END ---
 
             if len(self.controller.text_list1.get(0, tk.END)) > 0:
+                self.recipe_list = self.controller.text_list1.get(0, tk.END)
                 self.controller.show_page(self.controller.page2)
 
-                #replicates textbox1 in Window2
-                self.controller.box_select.delete(0, tk.END) 
+                # replicates textbox1 in Window2
+                self.controller.box_select.delete(0, tk.END)
                 if len(self.controller.text_list1.get(0, tk.END)) > 0:
                     for item in self.controller.text_list1.get(0, tk.END):
-                        self.controller.box_select.insert(tk.END, item)   
+                        self.controller.box_select.insert(tk.END, item)
 
-                if self.mode == 'start':
+                if self.mode == "start":
                     self.read_control_plan()
 
                 self.read_testing()
@@ -1306,102 +1784,111 @@ class Start(tk.Frame):
                 self.read_inventory()
                 self.compare()
 
-                # SOCP-läge: global konvex optimering
-                if hasattr(self.controller, 'use_socp_var') and self.controller.use_socp_var.get():
-                    try:
-                        self.socp_optimize()
-                    except Exception:
-                        return
-                    setattr(self.controller, self.rec_key, self.rec_)
-                else:
-                    # Legacy-LP
-                    self.prepare()
-                    setattr(self.controller, self.rec_key, self.rec_)
-
+            if self.controller.use_socp_var.get():
+                try:
+                    self.socp_optimize()  # initial without caps
+                except Exception as err:
+                    messagebox.showerror("SOCP Error", f"Initial SOCP failed: {err}")
+                    return
+                setattr(self.controller, self.rec_key, self.rec_)
                 self.controller.succ_dict = {}
                 self.controller.cost_dict = {}
-                for i in range(len(self.rec_['artnum'])):
-                    self.success_procent(index=i) 
+                for i in range(len(self.rec_["artnum"])):
+                    self.success_procent(index=i)
                     self.cost_calculator(index=i)
-                self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
+                self.controller.cost_dict["cost_sum"] = sum(
+                    self.controller.cost_dict.values()
+                )
 
-                if self.controller.use_socp_var.get():
-                    # initial SOCP
-                    self.socp_optimize()
-                    setattr(self.controller, self.rec_key, self.rec_)
-                    self.controller.succ_dict = {}
-                    self.controller.cost_dict = {}
-                    for i in range(len(self.rec_['artnum'])):
-                        self.success_procent(index=i)
-                        self.cost_calculator(index=i)
-                    self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
+                # check if all meet target
+                try:
+                    target_prob = float(self.controller.target_pct_var.get()) / 100.0
+                except Exception:
+                    target_prob = 0.70
+                if not all(
+                    self.controller.succ_dict[ri][0] >= target_prob
+                    for ri in range(len(self.rec_["artnum"]))
+                ):
+                    self.controller.prob_caps = {}
 
-                    # check if all meet target
-                    try:
-                        target_prob = float(self.controller.target_pct_var.get()) / 100.0
-                    except Exception:
-                        target_prob = 0.70
-                    if all(self.controller.succ_dict[ri][0] >= target_prob for ri in range(len(self.rec_['artnum']))):
-                        pass  # done
-                    else:
-                        # iterative loop for SOCP
-                        self.controller.prob_caps = {}
-                        def _build_or_update_prob_caps(target):
-                            K = len([e for e in range(24) if e not in (4, 22)])
-                            p_e = target ** (1.0 / K)
-                            z = norm.ppf(p_e)
-                            changed = False
-                            for ri in range(len(self.rec_['artnum'])):
-                                total_prob = float(self.controller.succ_dict[ri][0])
-                                if total_prob >= target:
+                    def _build_or_update_prob_caps(target):
+                        K = len([e for e in range(24) if e not in (4, 22)])
+                        p_e = target ** (1.0 / K)
+                        z = norm.ppf(p_e)
+                        changed = False
+                        for ri in range(len(self.rec_["artnum"])):
+                            total_prob = float(self.controller.succ_dict[ri][0])
+                            if total_prob >= target:
+                                continue
+                            w_out = float(self.controller.cp_dict["weight_out"][ri])
+                            alloy = self.controller.rec_["alloy"][ri]
+                            outer_max = self.controller.cp_dict["outer_max"][ri]
+                            caps_i = self.controller.prob_caps.get(ri, {})
+                            for e in range(24):
+                                if e in (4, 22):
                                     continue
-                                w_out = float(self.controller.cp_dict['weight_out'][ri])
-                                alloy = self.controller.rec_['alloy'][ri]
-                                outer_max = self.controller.cp_dict['outer_max'][ri]
-                                caps_i = self.controller.prob_caps.get(ri, {})
-                                for e in range(24):
-                                    if e in (4, 22):
-                                        continue
-                                    delta = float(outer_max[e] - alloy[e])
-                                    if delta <= 0:
-                                        rhs = 0.0
-                                    else:
-                                        rhs = w_out * (delta / z) ** 2
-                                    prev = caps_i.get(e, None)
-                                    if prev is None or abs(prev - rhs) > 1e-6:
-                                        caps_i[e] = rhs
-                                        changed = True
-                                if caps_i:
-                                    self.controller.prob_caps[ri] = caps_i
-                            return changed
+                                delta = float(outer_max[e] - alloy[e])
+                                if delta <= 0:
+                                    rhs = 0.0
+                                else:
+                                    rhs = w_out * (delta / z) ** 2
+                                prev = caps_i.get(e, None)
+                                if prev is None or abs(prev - rhs) > 1e-6:
+                                    caps_i[e] = rhs
+                                    changed = True
+                            if caps_i:
+                                self.controller.prob_caps[ri] = caps_i
+                        return changed
 
-                        try:
-                            max_iters = int(self.controller.max_attempts_var.get())
-                        except Exception:
-                            max_iters = 15
-                        max_iters = max(1, min(1000, max_iters))
+                    try:
+                        max_iters = int(self.controller.max_attempts_var.get())
+                    except Exception:
+                        max_iters = 15
+                    max_iters = max(1, min(1000, max_iters))
 
-                        for _ in range(max_iters):
-                            # build caps
-                            if not _build_or_update_prob_caps(target_prob):
-                                break
-                            # solve SOCP with caps
-                            self.socp_optimize()
-                            setattr(self.controller, self.rec_key, self.rec_)
-                            self.controller.succ_dict = {}
-                            self.controller.cost_dict = {}
-                            for ii in range(len(self.rec_['artnum'])):
-                                self.success_procent(index=ii)
-                                self.cost_calculator(index=ii)
-                            self.controller.cost_dict['cost_sum'] = sum(self.controller.cost_dict.values())
-                            # check
-                            if all(self.controller.succ_dict[ri][0] >= target_prob for ri in range(len(self.rec_['artnum']))):
-                                break
+                    for _ in range(max_iters):
+                        if not _build_or_update_prob_caps(target_prob):
+                            break
+                        self.socp_optimize()
+                        setattr(self.controller, self.rec_key, self.rec_)
+                        self.controller.succ_dict = {}
+                        self.controller.cost_dict = {}
+                        for ii in range(len(self.rec_["artnum"])):
+                            self.success_procent(index=ii)
+                            self.cost_calculator(index=ii)
+                        self.controller.cost_dict["cost_sum"] = sum(
+                            self.controller.cost_dict.values()
+                        )
+                        if all(
+                            self.controller.succ_dict[ri][0] >= target_prob
+                            for ri in range(len(self.rec_["artnum"]))
+                        ):
+                            break
 
-                        # final check
-                        remaining = [ri for ri in range(len(self.rec_['artnum'])) if self.controller.succ_dict[ri][0] < target_prob]
-                        if remaining:
-                            messagebox.showwarning('Target Warning', f'SOCP did not fully meet target for indices: {", ".join(map(str, remaining))}. Achieved probabilities shown.')
+                    # final check
+                    remaining = [
+                        ri
+                        for ri in range(len(self.rec_["artnum"]))
+                        if self.controller.succ_dict[ri][0] < target_prob
+                    ]
+                    if remaining:
+                        messagebox.showwarning(
+                            "Target Warning",
+                            f'SOCP did not fully meet target for indices: {", ".join(map(str, remaining))}. Achieved probabilities shown.',
+                        )
+            else:
+                # Legacy-LP
+                self.prepare()
+                setattr(self.controller, self.rec_key, self.rec_)
+                self.controller.succ_dict = {}
+                self.controller.cost_dict = {}
+                for i in range(len(self.rec_["artnum"])):
+                    self.success_procent(index=i)
+                    self.cost_calculator(index=i)
+                self.controller.cost_dict["cost_sum"] = sum(
+                    self.controller.cost_dict.values()
+                )
+
 
 class Window2(tk.Frame):
     def __init__(self, parent, controller):
@@ -1415,19 +1902,19 @@ class Window2(tk.Frame):
         self.rowconfigure(2, weight=1)
 
         self.controller.frame_box_select = ListBoxSelect(self, controller)
-        self.controller.frame_box_select.grid(row=0, column=0, rowspan=3, sticky='nsew')
+        self.controller.frame_box_select.grid(row=0, column=0, rowspan=3, sticky="nsew")
 
         frame_go_back = GoBack1(self, controller)
-        frame_go_back.grid(row=0, column=0, sticky='nw')
+        frame_go_back.grid(row=0, column=0, sticky="nw")
 
         frame_export_button = ExportButton(self, controller)
-        frame_export_button.grid(row=2, column=2, sticky='se')
+        frame_export_button.grid(row=2, column=2, sticky="se")
 
-        frame_start = Start(self, controller, rec_key='rec_', mode='remake')
-        frame_start.grid(row=2, column=2, sticky='ne')
+        frame_start = Start(self, controller, rec_key="rec_", mode="remake")
+        frame_start.grid(row=2, column=2, sticky="ne")
 
-        frame_listbox3 = InputForm(self, controller, 'frame2')
-        frame_listbox3.grid(row=0, column=2, sticky='nsew', rowspan=2)
+        frame_listbox3 = InputForm(self, controller, "frame2")
+        frame_listbox3.grid(row=0, column=2, sticky="nsew", rowspan=2)
 
         controller.text_list3 = frame_listbox3.text_list
 
@@ -1438,56 +1925,94 @@ class Window2(tk.Frame):
 
     def open_settings(self):
         win = tk.Toplevel(self)
-        win.title('Inställningar')
+        win.title("Inställningar")
         win.transient(self.winfo_toplevel())
         win.grab_set()
         win.resizable(True, True)
-        win.geometry('900x700')
+        win.geometry("900x700")
         win.minsize(900, 700)
-        pad = {'padx': 12, 'pady': 8}
+        pad = {"padx": 12, "pady": 8}
 
         # Sektion: Sannolikhet
-        prob_frame = tk.LabelFrame(win, text='Sannolikhet', font=tkFont.Font(size=11))
-        prob_frame.grid(row=0, column=0, sticky='nsew', **pad)
-        tk.Label(prob_frame, text='Målvärde %').grid(row=0, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(row=0, column=1, sticky='e', padx=6, pady=4)
-        tk.Label(prob_frame, text='Bandbredd %').grid(row=1, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(row=1, column=1, sticky='e', padx=6, pady=4)
-        tk.Label(prob_frame, text='Max försök').grid(row=2, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(prob_frame, textvariable=self.controller.max_attempts_var, width=8).grid(row=2, column=1, sticky='e', padx=6, pady=4)
+        prob_frame = tk.LabelFrame(win, text="Sannolikhet", font=tkFont.Font(size=11))
+        prob_frame.grid(row=0, column=0, sticky="nsew", **pad)
+        tk.Label(prob_frame, text="Målvärde %").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(
+            row=0, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(prob_frame, text="Bandbredd %").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(
+            row=1, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(prob_frame, text="Max försök").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(
+            prob_frame, textvariable=self.controller.max_attempts_var, width=8
+        ).grid(row=2, column=1, sticky="e", padx=6, pady=4)
 
         # Sektion: Optimering
-        opt_frame = tk.LabelFrame(win, text='Optimering', font=tkFont.Font(size=11))
-        opt_frame.grid(row=1, column=0, sticky='nsew', **pad)
-        tk.Checkbutton(opt_frame, text='Optimera med SOCP', variable=self.controller.use_socp_var).grid(row=0, column=0, columnspan=2, sticky='w', padx=6, pady=4)
-        tk.Label(opt_frame, text='Lösare').grid(row=1, column=0, sticky='w', padx=6, pady=4)
-        solver_menu = tk.OptionMenu(opt_frame, self.controller.socp_solver_var, 'ECOS', 'SCS', 'MOSEK')
-        solver_menu.grid(row=1, column=1, sticky='e', padx=6, pady=4)
+        opt_frame = tk.LabelFrame(win, text="Optimering", font=tkFont.Font(size=11))
+        opt_frame.grid(row=1, column=0, sticky="nsew", **pad)
+        tk.Checkbutton(
+            opt_frame, text="Optimera med SOCP", variable=self.controller.use_socp_var
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        tk.Label(opt_frame, text="Lösare").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        solver_menu = tk.OptionMenu(
+            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK"
+        )
+        solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
 
         # Sektion: Slackvikter (Alternativ B)
-        slack_frame = tk.LabelFrame(win, text='Slackvikter (Alternativ B)', font=tkFont.Font(size=11))
-        slack_frame.grid(row=2, column=0, sticky='nsew', **pad)
-        tk.Label(slack_frame, text='Lambda u').grid(row=0, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(row=0, column=1, sticky='e', padx=6, pady=4)
-        tk.Label(slack_frame, text='Lambda v').grid(row=1, column=0, sticky='w', padx=6, pady=4)
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(row=1, column=1, sticky='e', padx=6, pady=4)
+        slack_frame = tk.LabelFrame(
+            win, text="Slackvikter (Alternativ B)", font=tkFont.Font(size=11)
+        )
+        slack_frame.grid(row=2, column=0, sticky="nsew", **pad)
+        tk.Label(slack_frame, text="Lambda u").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(
+            row=0, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(slack_frame, text="Lambda v").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(
+            row=1, column=1, sticky="e", padx=6, pady=4
+        )
 
         # Knappar
         btn_frame = tk.Frame(win)
-        btn_frame.grid(row=3, column=0, sticky='e', **pad)
+        btn_frame.grid(row=3, column=0, sticky="e", **pad)
+
         def reset_defaults():
-            self.controller.target_pct_var.set('70')
-            self.controller.band_width_var.set('9')
-            self.controller.max_attempts_var.set('20')
-            self.controller.lambda_u_var.set('1.0')
-            self.controller.lambda_v_var.set('1000000')
+            self.controller.target_pct_var.set("70")
+            self.controller.band_width_var.set("9")
+            self.controller.max_attempts_var.set("20")
+            self.controller.lambda_u_var.set("1.0")
+            self.controller.lambda_v_var.set("1000000")
             self.controller.use_socp_var.set(False)
-            self.controller.socp_solver_var.set('ECOS')
+            self.controller.socp_solver_var.set("ECOS")
+
         def apply_and_close():
             win.destroy()
-        tk.Button(btn_frame, text='Återställ', command=reset_defaults).grid(row=0, column=0, padx=5)
-        tk.Button(btn_frame, text='Stäng', command=win.destroy).grid(row=0, column=1, padx=5)
-        tk.Button(btn_frame, text='Verkställ', command=apply_and_close).grid(row=0, column=2, padx=5)
+
+        tk.Button(btn_frame, text="Återställ", command=reset_defaults).grid(
+            row=0, column=0, padx=5
+        )
+        tk.Button(btn_frame, text="Stäng", command=win.destroy).grid(
+            row=0, column=1, padx=5
+        )
+        tk.Button(btn_frame, text="Verkställ", command=apply_and_close).grid(
+            row=0, column=2, padx=5
+        )
+
 
 class GoBack1(tk.Frame):
     def __init__(self, parent, controller):
@@ -1495,49 +2020,74 @@ class GoBack1(tk.Frame):
         self.controller = controller
         # Rad med tillbaka- och kugghjulsknapp till vänster
         row_frame = tk.Frame(self)
-        row_frame.pack(anchor='nw', padx=5, pady=5)
-        self.go_back = tk.Button(row_frame, text='<-', font=tkFont.Font(size=12), command=self.go_b)
-        self.go_back.pack(side='left')
+        row_frame.pack(anchor="nw", padx=5, pady=5)
+        self.go_back = tk.Button(
+            row_frame, text="<-", font=tkFont.Font(size=12), command=self.go_b
+        )
+        self.go_back.pack(side="left")
         # Inställningsknapp öppnar Window2.open_settings
-        self.settings_btn = tk.Button(row_frame, text='⚙', font=tkFont.Font(size=12), command=parent.open_settings)
-        self.settings_btn.pack(side='left', padx=(8, 0))
+        self.settings_btn = tk.Button(
+            row_frame, text="⚙", font=tkFont.Font(size=12), command=parent.open_settings
+        )
+        self.settings_btn.pack(side="left", padx=(8, 0))
+
     def go_b(self):
         self.controller.show_page(self.controller.page1)
-        
+
         self.controller.text_list2.delete(0, tk.END)
         if len(self.controller.text_list3.get(0, tk.END)) > 0:
             for item in self.controller.text_list3.get(0, tk.END):
-                self.controller.text_list2.insert(tk.END, item)            
+                self.controller.text_list2.insert(tk.END, item)
+
 
 class ListBoxSelect(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
         self.controller.box_select = tk.Listbox(self, font=tkFont.Font(size=12))
-        self.controller.box_select.pack(padx=5, pady=(35, 5), anchor='sw', expand=True, fill='both')
-        
+        self.controller.box_select.pack(
+            padx=5, pady=(35, 5), anchor="sw", expand=True, fill="both"
+        )
+
         self.controller.box_select.bind("<Double-Button-1>", self.on_select)
 
     def on_select(self, _event=None):
         widget = self.controller.box_select
-        selection = widget.curselection()   
+        selection = widget.curselection()
         if selection:
             index = selection[0]
             self.controller.index = index
             self.update_page3()
+
     def update_page3(self):
         widget = self.controller.box_select
         self.controller.value = widget.get(self.controller.index)
         self.controller.show_page(self.controller.page3)
-        self.controller.recipe_label.config(text=f'{self.controller.value} index: {self.controller.index}') #changes the recipe label to currently opened recipe
+        self.controller.recipe_label.config(
+            text=f"{self.controller.value} index: {self.controller.index}"
+        )  # changes the recipe label to currently opened recipe
 
-        self.controller.text_list4.delete(0, tk.END) #sätter lista för lokala bivillkor till matchande lista
+        self.controller.text_list4.delete(
+            0, tk.END
+        )  # sätter lista för lokala bivillkor till matchande lista
         if self.controller.index in self.controller.lr_dict:
             for item in self.controller.lr_dict[self.controller.index]:
-                self.controller.text_list4.insert(tk.END, item)  
+                self.controller.text_list4.insert(tk.END, item)
 
         if self.controller.success_bool:
-            rec_string = self.controller.rec_['artnum'][self.controller.index].astype('U100') + ' - ' + np.round(self.controller.rec_['scrap_amount'][self.controller.index], 0).astype(int).astype('U100') + ' kg, ' + self.controller.rec_['rec_description'][self.controller.index].astype('U100')
+            rec_string = (
+                self.controller.rec_["artnum"][self.controller.index].astype("U100")
+                + " - "
+                + np.round(
+                    self.controller.rec_["scrap_amount"][self.controller.index], 0
+                )
+                .astype(int)
+                .astype("U100")
+                + " kg, "
+                + self.controller.rec_["rec_description"][self.controller.index].astype(
+                    "U100"
+                )
+            )
 
             self.controller.recipe_box.delete(0, tk.END)
             if len(rec_string) > 0:
@@ -1556,119 +2106,140 @@ class ListBoxSelect(tk.Frame):
             attempts = int(self.controller.adjust_attempts[self.controller.index])
         except Exception:
             attempts = 0
-        if hasattr(self.controller, 'attempt_label'):
-            self.controller.attempt_label.config(text=f'Justeringsförsök: {attempts}')
+        if hasattr(self.controller, "attempt_label"):
+            self.controller.attempt_label.config(text=f"Justeringsförsök: {attempts}")
+
 
 class ExportButton(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self.export_button = tk.Button(self, width=20, height=4, bg='green', text='Export', command=self.export, font=tkFont.Font(size=14))
-        self.export_button.pack(anchor='se', padx=5, pady=5)
+        self.export_button = tk.Button(
+            self,
+            width=20,
+            height=4,
+            bg="green",
+            text="Export",
+            command=self.export,
+            font=tkFont.Font(size=14),
+        )
+        self.export_button.pack(anchor="se", padx=5, pady=5)
 
     def export(self):
         export_dict = {}
         if self.controller.success_bool:
-            n = self.controller.rec_['n']
+            n = self.controller.rec_["n"]
             if not self.controller.checkbox_var.get():
                 for i in range(n):
-                    index_string = f'{self.controller.box_select.get(i)}, {i}'
-                    export_dict[index_string + ', artnum'] = pd.Series(list(self.controller.rec_['artnum'][i]))
-                    export_dict[index_string + ', amount'] = pd.Series(list(np.round(self.controller.rec_['scrap_amount'][i], 0)))
-                name = 'OptiX export'                
+                    index_string = f"{self.controller.box_select.get(i)}, {i}"
+                    export_dict[index_string + ", artnum"] = pd.Series(
+                        list(self.controller.rec_["artnum"][i])
+                    )
+                    export_dict[index_string + ", amount"] = pd.Series(
+                        list(np.round(self.controller.rec_["scrap_amount"][i], 0))
+                    )
+                name = "OptiX export"
 
             else:
-                set_scrap_amount = np.zeros(self.controller.rec_['rec_scrap_result_x'][0].shape)
-                artnum = self.controller.rec_['set_artnum_p']
+                set_scrap_amount = np.zeros(
+                    self.controller.rec_["rec_scrap_result_x"][0].shape
+                )
+                artnum = self.controller.rec_["set_artnum_p"]
                 for i in range(n):
-                    set_scrap_amount += self.controller.rec_['rec_scrap_result_x'][i]
+                    set_scrap_amount += self.controller.rec_["rec_scrap_result_x"][i]
                 scrap_amount = set_scrap_amount[set_scrap_amount != 0]
                 artnum = artnum[set_scrap_amount != 0]
-                export_dict['artnum'] = pd.Series(list(artnum))
-                export_dict['amount'] = pd.Series(list(np.round(scrap_amount, 0)))
-                name = 'OptiX simulation'
+                export_dict["artnum"] = pd.Series(list(artnum))
+                export_dict["amount"] = pd.Series(list(np.round(scrap_amount, 0)))
+                name = "OptiX simulation"
 
             df = pd.DataFrame(export_dict)
             now = datetime.now()
             formatted_datetime = now.strftime("%d-%m-%Y %H-%M")
-            document_name = f'{formatted_datetime} {name}.xlsx'
+            document_name = f"{formatted_datetime} {name}.xlsx"
             file_path = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 filetypes=[("Excel files", "*.xlsx")],
                 title="Save Excel File",
-                initialfile=document_name
+                initialfile=document_name,
             )
             if file_path:
                 df.to_excel(file_path, index=False)
             else:
-                messagebox.showerror('Error', 'Export not possible')
+                messagebox.showerror("Error", "Export not possible")
+
 
 class Window3(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
-        self.columnconfigure(0, weight=5, uniform='group1')
+        self.columnconfigure(0, weight=5, uniform="group1")
         self.columnconfigure(1, weight=0, minsize=520)
-        self.columnconfigure(2, weight=1, uniform='group1')
-        self.columnconfigure(3, weight=4, uniform='group1')
-        self.rowconfigure(0, weight=2, uniform='group2')
+        self.columnconfigure(2, weight=1, uniform="group1")
+        self.columnconfigure(3, weight=4, uniform="group1")
+        self.rowconfigure(0, weight=2, uniform="group2")
         self.rowconfigure(1, weight=0, minsize=550)
-        self.rowconfigure(2, weight=1, uniform='group2')
-        
+        self.rowconfigure(2, weight=1, uniform="group2")
+
         frame_recipe_box = RecipeListBox(self, controller)
-        frame_recipe_box.grid(row=0, column=0, rowspan=3, sticky='nsew')
+        frame_recipe_box.grid(row=0, column=0, rowspan=3, sticky="nsew")
 
         frame_recipe_label = RecipeLabel(self, controller)
-        frame_recipe_label.grid(row=0, column=0, sticky='n')
+        frame_recipe_label.grid(row=0, column=0, sticky="n")
 
         frame_go_back = GoBack2(self, controller)
-        frame_go_back.grid(row=0, column=0, sticky='nw')
-
+        frame_go_back.grid(row=0, column=0, sticky="nw")
 
         frame_percent_label = PercentLabel(self, controller)
-        frame_percent_label.grid(row=2, column=1, sticky='ne')
+        frame_percent_label.grid(row=2, column=1, sticky="ne")
 
         controller.frame_cost_label = CostLabel(self, controller)
-        controller.frame_cost_label.grid(row=2, column=1, sticky='nw')
+        controller.frame_cost_label.grid(row=2, column=1, sticky="nw")
 
         controller.frame_attempt_label = AttemptLabel(self, controller)
-        controller.frame_attempt_label.grid(row=2, column=1, sticky='se')
+        controller.frame_attempt_label.grid(row=2, column=1, sticky="se")
 
         controller.frame_recomendation_box = RecomendationBox(self, controller)
-        controller.frame_recomendation_box.grid(row=0, column=1, sticky='nsew')
+        controller.frame_recomendation_box.grid(row=0, column=1, sticky="nsew")
 
-        frame_listbox4 = InputForm(self, controller, 'frame3')
-        frame_listbox4.grid(row=0, column=2, rowspan=2, columnspan=2, sticky='nsew')
+        frame_listbox4 = InputForm(self, controller, "frame3")
+        frame_listbox4.grid(row=0, column=2, rowspan=2, columnspan=2, sticky="nsew")
 
         controller.frame_tolerance_control = ToleranceControl(self, controller)
-        controller.frame_tolerance_control.grid(row=1, column=1, sticky='ew')
+        controller.frame_tolerance_control.grid(row=1, column=1, sticky="ew")
 
         frame_next_btn = NextButton(self, controller)
-        frame_next_btn.grid(row=0, column=0, sticky='ne')
+        frame_next_btn.grid(row=0, column=0, sticky="ne")
 
-        controller.frame_weight_out = WeightInOut(self, controller, 'weight_out')
-        controller.frame_weight_out.grid(row=2, column=2, sticky='ne')
-                              
-        controller.frame_weight_in = WeightInOut(self, controller, 'weight_in')
-        controller.frame_weight_in.grid(row=2, column=3, sticky='nw')
+        controller.frame_weight_out = WeightInOut(self, controller, "weight_out")
+        controller.frame_weight_out.grid(row=2, column=2, sticky="ne")
+
+        controller.frame_weight_in = WeightInOut(self, controller, "weight_in")
+        controller.frame_weight_in.grid(row=2, column=3, sticky="nw")
 
         controller.text_list4 = frame_listbox4.text_list
-     
+
+
 class GoBack2(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self.go_back = tk.Button(self, text='<-', command=self.go_b)
-        self.go_back.pack(anchor='nw', padx=5, pady=5)
+        self.go_back = tk.Button(self, text="<-", command=self.go_b)
+        self.go_back.pack(anchor="nw", padx=5, pady=5)
+
     def go_b(self):
         self.controller.show_page(self.controller.page2)
+
 
 class RecipeLabel(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self.controller.recipe_label = tk.Label(self, font=tkFont.Font(size=16), bd=5, relief='ridge', text='none')
-        self.controller.recipe_label.pack(anchor='n')
-             
+        self.controller.recipe_label = tk.Label(
+            self, font=tkFont.Font(size=16), bd=5, relief="ridge", text="none"
+        )
+        self.controller.recipe_label.pack(anchor="n")
+
+
 class RecipeListBox(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
@@ -1676,28 +2247,29 @@ class RecipeListBox(tk.Frame):
         self.controller.recipe_box = tk.Listbox(self, font=tkFont.Font(size=12))
         self.controller.recipe_box.pack(fill="both", padx=5, pady=(35, 5), expand=True)
 
+
 class ToleranceControl(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
-        self.controller = controller 
+        self.controller = controller
 
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
         self.size = 0.25
 
-        name = ['Al'] * 24
+        name = ["Al"] * 24
         lower_b = np.array([0] * 24)
         upper_b = np.array([1] * 24)
-        complete_alloy = np.array([1/2] * 24)
+        complete_alloy = np.array([1 / 2] * 24)
         intervals = []
         for i in range(len(name)):
-            interval = f'{name[i]} ({lower_b[i]}-{upper_b[i]}) {complete_alloy[i]:.2f}'
+            interval = f"{name[i]} ({lower_b[i]}-{upper_b[i]}) {complete_alloy[i]:.2f}"
             intervals.append(interval)
 
         self.n = len(name)
 
-        fig, self.ax = plt.subplots(figsize=(3, 5.6)) #adjust output size
-        self.ax.set_xlim(0,1)
+        fig, self.ax = plt.subplots(figsize=(3, 5.6))  # adjust output size
+        self.ax.set_xlim(0, 1)
         self.ax.set_ylim(0.5, self.n + 0.5)
         self.ax.set_yticks(np.arange(1, self.n + 1))
         self.ax.set_yticklabels(intervals)
@@ -1712,47 +2284,78 @@ class ToleranceControl(tk.Frame):
         for i in range(self.n):
             val_norm = (complete_alloy[i] - lower_b[i]) / (upper_b[i] - lower_b[i])
 
-            self.ax.add_patch(plt.Rectangle((0, i + 1 -self.size), 1 , 2*self.size, facecolor='lightgray', edgecolor='black'))
-            red_line = self.ax.plot([self.move_upper_b[i], self.move_upper_b[i]], [i + 1 -self.size, i + 1 + self.size], color='red', linewidth=2)
+            self.ax.add_patch(
+                plt.Rectangle(
+                    (0, i + 1 - self.size),
+                    1,
+                    2 * self.size,
+                    facecolor="lightgray",
+                    edgecolor="black",
+                )
+            )
+            red_line = self.ax.plot(
+                [self.move_upper_b[i], self.move_upper_b[i]],
+                [i + 1 - self.size, i + 1 + self.size],
+                color="red",
+                linewidth=2,
+            )
             self.red_lines.append(red_line)
-            l_red_line = self.ax.plot([self.pos_l_red_lines[i], self.pos_l_red_lines[i]], [i + 1 -self.size, i + 1 + self.size], color='red', linewidth=2)
+            l_red_line = self.ax.plot(
+                [self.pos_l_red_lines[i], self.pos_l_red_lines[i]],
+                [i + 1 - self.size, i + 1 + self.size],
+                color="red",
+                linewidth=2,
+            )
             self.l_red_lines.append(l_red_line)
-            blue_line = self.ax.plot([val_norm, val_norm], [i + 1 - self.size, i + 1 + self.size], color='blue', linewidth=2)
+            blue_line = self.ax.plot(
+                [val_norm, val_norm],
+                [i + 1 - self.size, i + 1 + self.size],
+                color="blue",
+                linewidth=2,
+            )
             self.blue_lines.append(blue_line)
-            percent = self.ax.text(1.05, i + 1, f'100%', va='center')
-            self.percents.append(percent) 
+            percent = self.ax.text(1.05, i + 1, f"100%", va="center")
+            self.percents.append(percent)
 
         # ax.set_title('Toleranskontroll')
         # ax.set_xlabel('Normaliserat intervall (0-100%)')
         # plt.tight_layout()
         # Embed the matplotlib figure in Tkinter
         fig.subplots_adjust(
-            top=0.97,    # space at the top (1.0 = top edge of the figure)
+            top=0.97,  # space at the top (1.0 = top edge of the figure)
             bottom=0.074,  # space at the bottom (0.0 = bottom edge of the figure)
-            left=0.35,    # space on the left
-            right=0.85    # space on the right
+            left=0.35,  # space on the left
+            right=0.85,  # space on the right
         )
 
         self.canvas = FigureCanvasTkAgg(fig, master=self)
         self.canvas_widget = self.canvas.get_tk_widget()
-        self.canvas_widget.grid(row=0, column=0, padx=(0,26), sticky='ew')
-
+        self.canvas_widget.grid(row=0, column=0, padx=(0, 26), sticky="ew")
 
         button_frame = tk.Frame(self)
-        button_frame.grid(row=0, column=0, pady=(0,42), sticky='es')
+        button_frame.grid(row=0, column=0, pady=(0, 42), sticky="es")
         # Create buttons for each value
         for i in range(0, 24):
             frame = tk.Frame(button_frame)
             frame.grid(row=i, column=2)
-            tk.Button(frame, text="+", font=('Arial', 7), command=lambda i=i: self.change_value(23-i, 0.1)).grid(row=0, column=1)
-            tk.Button(frame, text="-", font=('Arial', 7), command=lambda i=i: self.change_value(23-i, -0.1)).grid(row=0, column=0)
+            tk.Button(
+                frame,
+                text="+",
+                font=("Arial", 7),
+                command=lambda i=i: self.change_value(23 - i, 0.1),
+            ).grid(row=0, column=1)
+            tk.Button(
+                frame,
+                text="-",
+                font=("Arial", 7),
+                command=lambda i=i: self.change_value(23 - i, -0.1),
+            ).grid(row=0, column=0)
 
     def update_canvas(self):
         def smart_format(value):
             # Om värdet är ett heltal, visa utan decimaler
             if abs(value) < 0.0005:
                 return "0"
-
 
             if value > 50:
                 fractional = value - int(value)
@@ -1762,11 +2365,13 @@ class ToleranceControl(tk.Frame):
                     return f"{int(value):.0f}"
             if value == int(value):
                 return str(int(value))
-            
+
             # Räkna antal decimaler
-            decimal_str = f"{value:.4f}".rstrip("0")  # max 10 decimaler, ta bort överflödiga nollor
+            decimal_str = f"{value:.4f}".rstrip(
+                "0"
+            )  # max 10 decimaler, ta bort överflödiga nollor
             decimals = decimal_str.split(".")[1] if "." in decimal_str else ""
-            
+
             # Visa med så många decimaler som behövs (max 3)
             if len(decimals) == 1:
                 return f"{value:.1f}"
@@ -1779,128 +2384,228 @@ class ToleranceControl(tk.Frame):
 
         intervals = []
         for i in range(self.n):
-            self.move_upper_b[i] = ((self.controller.cp_dict['tol_max'][self.controller.index][i]-self.controller.cp_dict['outer_min'][self.controller.index][i])/
-                (self.controller.cp_dict['outer_max'][self.controller.index][i]-self.controller.cp_dict['outer_min'][self.controller.index][i]))
+            self.move_upper_b[i] = (
+                self.controller.cp_dict["tol_max"][self.controller.index][i]
+                - self.controller.cp_dict["outer_min"][self.controller.index][i]
+            ) / (
+                self.controller.cp_dict["outer_max"][self.controller.index][i]
+                - self.controller.cp_dict["outer_min"][self.controller.index][i]
+            )
             self.red_lines[i][0].remove()
-            red_line = self.ax.plot([self.move_upper_b[i], self.move_upper_b[i]], [i + 1 -self.size, i + 1 + self.size], color='red', linewidth=2)
+            red_line = self.ax.plot(
+                [self.move_upper_b[i], self.move_upper_b[i]],
+                [i + 1 - self.size, i + 1 + self.size],
+                color="red",
+                linewidth=2,
+            )
             self.red_lines[i] = red_line
-            
-            self.pos_l_red_lines[i] = ((self.controller.cp_dict['tol_min'][self.controller.index][i]-self.controller.cp_dict['outer_min'][self.controller.index][i])/
-                (self.controller.cp_dict['outer_max'][self.controller.index][i]-self.controller.cp_dict['outer_min'][self.controller.index][i]))
+
+            self.pos_l_red_lines[i] = (
+                self.controller.cp_dict["tol_min"][self.controller.index][i]
+                - self.controller.cp_dict["outer_min"][self.controller.index][i]
+            ) / (
+                self.controller.cp_dict["outer_max"][self.controller.index][i]
+                - self.controller.cp_dict["outer_min"][self.controller.index][i]
+            )
             self.l_red_lines[i][0].remove()
-            l_red_line = self.ax.plot([self.pos_l_red_lines[i], self.pos_l_red_lines[i]], [i + 1 -self.size, i + 1 + self.size], color='red', linewidth=2)
+            l_red_line = self.ax.plot(
+                [self.pos_l_red_lines[i], self.pos_l_red_lines[i]],
+                [i + 1 - self.size, i + 1 + self.size],
+                color="red",
+                linewidth=2,
+            )
             self.l_red_lines[i] = l_red_line
-            
-            val_norm = ((self.controller.rec_['alloy'][self.controller.index][i]-self.controller.cp_dict['outer_min'][self.controller.index][i])/
-                (self.controller.cp_dict['outer_max'][self.controller.index][i]-self.controller.cp_dict['outer_min'][self.controller.index][i]))
+
+            val_norm = (
+                self.controller.rec_["alloy"][self.controller.index][i]
+                - self.controller.cp_dict["outer_min"][self.controller.index][i]
+            ) / (
+                self.controller.cp_dict["outer_max"][self.controller.index][i]
+                - self.controller.cp_dict["outer_min"][self.controller.index][i]
+            )
             self.blue_lines[i][0].remove()
-            blue_line = self.ax.plot([val_norm, val_norm], [i + 1 - self.size, i + 1 + self.size], color='blue', linewidth=2)
+            blue_line = self.ax.plot(
+                [val_norm, val_norm],
+                [i + 1 - self.size, i + 1 + self.size],
+                color="blue",
+                linewidth=2,
+            )
             self.blue_lines[i] = blue_line
 
             interval = (
-            f"{self.controller.cp_dict['elem'][i]} "
-            f"({smart_format(self.controller.cp_dict['outer_min'][self.controller.index][i])}-"
-            f"{smart_format(self.controller.cp_dict['outer_max'][self.controller.index][i])}) "
-            f"{smart_format(self.controller.rec_['alloy'][self.controller.index][i])}"
-                )
+                f"{self.controller.cp_dict['elem'][i]} "
+                f"({smart_format(self.controller.cp_dict['outer_min'][self.controller.index][i])}-"
+                f"{smart_format(self.controller.cp_dict['outer_max'][self.controller.index][i])}) "
+                f"{smart_format(self.controller.rec_['alloy'][self.controller.index][i])}"
+            )
             intervals.append(interval)
         self.ax.set_yticklabels(intervals)
- 
 
-        if hasattr(self, 'percents'):
+        if hasattr(self, "percents"):
             for i in self.percents:
                 i.remove()
         self.percents = []
         for i in range(24):
-            percent = self.ax.text(1.05, i + 1, f'{int(round(self.controller.succ_dict[self.controller.index][1][i]*100))}%', va='center')
+            percent = self.ax.text(
+                1.05,
+                i + 1,
+                f"{int(round(self.controller.succ_dict[self.controller.index][1][i]*100))}%",
+                va="center",
+            )
             self.percents.append(percent)
-        self.controller.percent_label.config(text=f'{int(round(self.controller.succ_dict[self.controller.index][0]*100))}%' )
+        self.controller.percent_label.config(
+            text=f"{int(round(self.controller.succ_dict[self.controller.index][0]*100))}%"
+        )
 
         for i, value in enumerate(self.controller.succ_dict[self.controller.index][1]):
-            if value < 0.97725 and (i != 4 and i !=22):
-                p = np.where(np.max(self.controller.succ_dict[self.controller.index][2][:,i]) == self.controller.succ_dict[self.controller.index][2][:,i])[0]
+            if value < 0.97725 and (i != 4 and i != 22):
+                p = np.where(
+                    np.max(self.controller.succ_dict[self.controller.index][2][:, i])
+                    == self.controller.succ_dict[self.controller.index][2][:, i]
+                )[0]
                 string = f"{self.controller.rec_['artnum'][self.controller.index][p][0]} has the highest deviation of {self.controller.cp_dict['elem'][i]}"
                 self.controller.recomendation_box.insert(tk.END, string)
 
-        self.controller.cost_label.config(text= f"{int(round(self.controller.cost_dict[self.controller.index]))} kr")
-        self.controller.cost_label_perkg.config(text= f"{round(self.controller.cost_dict[f'{self.controller.index}/kg'], 2)} kr/kg")
-        self.canvas.draw()      
-        
+        self.controller.cost_label.config(
+            text=f"{int(round(self.controller.cost_dict[self.controller.index]))} kr"
+        )
+        self.controller.cost_label_perkg.config(
+            text=f"{round(self.controller.cost_dict[f'{self.controller.index}/kg'], 2)} kr/kg"
+        )
+        self.canvas.draw()
+
     # Function to change a value
     def change_value(self, index, delta):
-      
+
         self.move_upper_b[index] += delta
         self.red_lines[index][0].remove()
-        
-        new_line = self.ax.plot([self.move_upper_b[index], self.move_upper_b[index]], [index + 1 -self.size, index + 1 + self.size], color='red', linewidth=2)
+
+        new_line = self.ax.plot(
+            [self.move_upper_b[index], self.move_upper_b[index]],
+            [index + 1 - self.size, index + 1 + self.size],
+            color="red",
+            linewidth=2,
+        )
         self.red_lines[index] = new_line
 
-        self.controller.cp_dict['tol_max'][self.controller.index][index] = self.move_upper_b[index]*(self.controller.cp_dict['outer_max'][self.controller.index][index] - self.controller.cp_dict['outer_min'][self.controller.index][index]) + self.controller.cp_dict['outer_min'][self.controller.index][index]
+        self.controller.cp_dict["tol_max"][self.controller.index][index] = (
+            self.move_upper_b[index]
+            * (
+                self.controller.cp_dict["outer_max"][self.controller.index][index]
+                - self.controller.cp_dict["outer_min"][self.controller.index][index]
+            )
+            + self.controller.cp_dict["outer_min"][self.controller.index][index]
+        )
         self.canvas.draw()
+
     def success_procent2(self):
-        p = np.where(self.controller.rec_['rec_result_x'][self.controller.index] != 0)
+        p = np.where(self.controller.rec_["rec_result_x"][self.controller.index] != 0)
         test_std = self.controller.all_test_std[p, :][0]
-        rec_result = self.controller.rec_['rec_result_x'][self.controller.index][p]
-        weighted_std = np.empty((0,24))
-        sum_weighted_std = np.empty((0,24))
+        rec_result = self.controller.rec_["rec_result_x"][self.controller.index][p]
+        weighted_std = np.empty((0, 24))
+        sum_weighted_std = np.empty((0, 24))
         for i in range(len(rec_result)):
-            sum_weighted_std = np.vstack((sum_weighted_std, rec_result[i]*np.power(test_std[i,:], 2)/self.controller.cp_dict['weight_out'][self.controller.index]))
-            weighted_std = np.vstack((weighted_std, rec_result[i]*test_std[i,:]/self.controller.cp_dict['weight_out'][self.controller.index]))
+            sum_weighted_std = np.vstack(
+                (
+                    sum_weighted_std,
+                    rec_result[i]
+                    * np.power(test_std[i, :], 2)
+                    / self.controller.cp_dict["weight_out"][self.controller.index],
+                )
+            )
+            weighted_std = np.vstack(
+                (
+                    weighted_std,
+                    rec_result[i]
+                    * test_std[i, :]
+                    / self.controller.cp_dict["weight_out"][self.controller.index],
+                )
+            )
 
         sum_weighted_std = np.sqrt(np.sum(sum_weighted_std, axis=0))
-        p = [] 
+        p = []
         for i in range(len(rec_result)):
-            if np.all(test_std[i,:] == 0):
+            if np.all(test_std[i, :] == 0):
                 p.append(i)
-        alloy = self.controller.rec_['alloy'][self.controller.index].copy()
-        amount = rec_result[p]/self.controller.cp_dict['weight_out'][self.controller.index]
-        an = self.controller.rec_['artnum'][self.controller.index][p]
+        alloy = self.controller.rec_["alloy"][self.controller.index].copy()
+        amount = (
+            rec_result[p] / self.controller.cp_dict["weight_out"][self.controller.index]
+        )
+        an = self.controller.rec_["artnum"][self.controller.index][p]
 
         for i in range(len(an)):
-            p2 = np.where(an[i] == self.controller.testing_dict['set_artnum_p'])[0]
-            alloy[:] -= (np.squeeze(self.controller.testing_dict['set_mean_final'][p2,:]))*amount[i]
+            p2 = np.where(an[i] == self.controller.testing_dict["set_artnum_p"])[0]
+            alloy[:] -= (
+                np.squeeze(self.controller.testing_dict["set_mean_final"][p2, :])
+            ) * amount[i]
         prob = []
         for i in range(23):
-            prob.append(norm.cdf(self.controller.cp_dict['outer_max'][self.controller.index][i], loc=alloy[i], scale=sum_weighted_std[i]))
-        prob.append(np.float64(1.0)) #Hg
-        if hasattr(self, 'percents'):
+            prob.append(
+                norm.cdf(
+                    self.controller.cp_dict["outer_max"][self.controller.index][i],
+                    loc=alloy[i],
+                    scale=sum_weighted_std[i],
+                )
+            )
+        prob.append(np.float64(1.0))  # Hg
+        if hasattr(self, "percents"):
             for i in self.percents:
                 i.remove()
         self.percents = []
         for i in range(24):
-            percent = self.ax.text(1.05, i + 1, f'{int(round(prob[i]*100))}%', va='center')
+            percent = self.ax.text(
+                1.05, i + 1, f"{int(round(prob[i]*100))}%", va="center"
+            )
             self.percents.append(percent)
 
-        self.controller.percent_label.config(text=f'{int(round(np.prod(np.delete(np.array(prob), [4, 22]))*100))}%' )
+        self.controller.percent_label.config(
+            text=f"{int(round(np.prod(np.delete(np.array(prob), [4, 22]))*100))}%"
+        )
 
         for i, value in enumerate(prob):
-            if value < 0.97725 and (i != 4 and i !=22):
-                p = np.where(np.max(weighted_std[:,i]) == weighted_std[:,i])[0]
+            if value < 0.97725 and (i != 4 and i != 22):
+                p = np.where(np.max(weighted_std[:, i]) == weighted_std[:, i])[0]
                 string = f"{self.controller.rec_['artnum'][self.controller.index][p][0]} has the highest deviation of {self.controller.cp_dict['elem'][i]}"
-                self.controller.recomendation_box.insert(tk.END, string)      
-                
+                self.controller.recomendation_box.insert(tk.END, string)
+
+
 class PercentLabel(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self.controller.percent_label = tk.Label(self, font=tkFont.Font(size=16), bd=5, relief='ridge', text='none')
-        self.controller.percent_label.pack(anchor='ne')
+        self.controller.percent_label = tk.Label(
+            self, font=tkFont.Font(size=16), bd=5, relief="ridge", text="none"
+        )
+        self.controller.percent_label.pack(anchor="ne")
+
 
 class CostLabel(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        controller.cost_label = tk.Label(self, font=tkFont.Font(size=16), bd=5, relief='ridge', text='none')
-        controller.cost_label.pack(anchor='nw')
-        controller.cost_label_perkg = tk.Label(self, font=tkFont.Font(size=16), bd=5, relief='ridge', text='none')
-        controller.cost_label_perkg.pack(anchor='sw')
+        controller.cost_label = tk.Label(
+            self, font=tkFont.Font(size=16), bd=5, relief="ridge", text="none"
+        )
+        controller.cost_label.pack(anchor="nw")
+        controller.cost_label_perkg = tk.Label(
+            self, font=tkFont.Font(size=16), bd=5, relief="ridge", text="none"
+        )
+        controller.cost_label_perkg.pack(anchor="sw")
+
 
 class AttemptLabel(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        controller.attempt_label = tk.Label(self, font=tkFont.Font(size=12), bd=2, relief='ridge', text='Justeringsförsök: 0')
-        controller.attempt_label.pack(anchor='se')
+        controller.attempt_label = tk.Label(
+            self,
+            font=tkFont.Font(size=12),
+            bd=2,
+            relief="ridge",
+            text="Justeringsförsök: 0",
+        )
+        controller.attempt_label.pack(anchor="se")
+
 
 class RecomendationBox(tk.Frame):
     def __init__(self, parent, controller):
@@ -1908,15 +2613,20 @@ class RecomendationBox(tk.Frame):
         self.controller = controller
         self.controller.recomendation_box = tk.Listbox(self, font=tkFont.Font(size=12))
         self.controller.recomendation_box.pack(fill="both", expand=True)
+
     def recommend(self):
         self.controller.recomendation_box.delete(0, tk.END)
-        rec_artnum = self.controller.rec_['artnum'][self.controller.index]
+        rec_artnum = self.controller.rec_["artnum"][self.controller.index]
         box_artnum = np.array(list(self.controller.boxes.keys()))
         box_recommend = np.intersect1d(rec_artnum, box_artnum)
 
         if len(box_recommend) > 0 and not self.controller.checkbox_var.get():
             for item in box_recommend:
-                self.controller.recomendation_box.insert(tk.END, f"{item}: {', '.join(map(str, self.controller.boxes[item]))}. Rest: {self.controller.boxes[f'{item}rest'][0]}")
+                self.controller.recomendation_box.insert(
+                    tk.END,
+                    f"{item}: {', '.join(map(str, self.controller.boxes[item]))}. Rest: {self.controller.boxes[f'{item}rest'][0]}",
+                )
+
 
 class NextButton(tk.Frame):
     def __init__(self, parent, controller):
@@ -1924,27 +2634,36 @@ class NextButton(tk.Frame):
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=0)
         self.controller = controller
-        self.next_btn = tk.Button(self, text='Next', font=tkFont.Font(size=12), command=self.go_next)
-        self.next_btn.grid(row=0, column=1, pady=(5, 0), padx=(0, 5), sticky='ne')
+        self.next_btn = tk.Button(
+            self, text="Next", font=tkFont.Font(size=12), command=self.go_next
+        )
+        self.next_btn.grid(row=0, column=1, pady=(5, 0), padx=(0, 5), sticky="ne")
 
-        self.prev_btn = tk.Button(self, text='Prev', font=tkFont.Font(size=12), command=self.go_prev)
-        self.prev_btn.grid(row=0, column=0, pady=(5, 0), padx=(0, 5), sticky='ne')
+        self.prev_btn = tk.Button(
+            self, text="Prev", font=tkFont.Font(size=12), command=self.go_prev
+        )
+        self.prev_btn.grid(row=0, column=0, pady=(5, 0), padx=(0, 5), sticky="ne")
 
     def go_next(self, _event=None):
-        self.change_page(btn_key= 'next')
+        self.change_page(btn_key="next")
 
     def go_prev(self, _event=None):
-        self.change_page(btn_key= 'prev')
+        self.change_page(btn_key="prev")
 
     def change_page(self, btn_key):
-        n = self.controller.rec_['n']
+        n = self.controller.rec_["n"]
 
-        if btn_key == 'next':
-            self.controller.index = self.controller.index + 1 if self.controller.index + 1 < n else 0
-        if btn_key == 'prev':
-            self.controller.index = self.controller.index - 1 if self.controller.index - 1 >= 0 else n-1
+        if btn_key == "next":
+            self.controller.index = (
+                self.controller.index + 1 if self.controller.index + 1 < n else 0
+            )
+        if btn_key == "prev":
+            self.controller.index = (
+                self.controller.index - 1 if self.controller.index - 1 >= 0 else n - 1
+            )
 
         self.controller.frame_box_select.update_page3()
+
 
 class WeightInOut(tk.Frame):
     def __init__(self, parent, controller, key):
@@ -1956,25 +2675,36 @@ class WeightInOut(tk.Frame):
         self.controller = controller
         self.key = key
 
-        self.weight_label = tk.Label(self, text='None', font=tkFont.Font(size=12))
+        self.weight_label = tk.Label(self, text="None", font=tkFont.Font(size=12))
         self.weight_label.grid(row=1, column=0)
 
-        add_btn = tk.Button(self, text='+500', font=tkFont.Font(size=12), command=self.add)
+        add_btn = tk.Button(
+            self, text="+500", font=tkFont.Font(size=12), command=self.add
+        )
         add_btn.grid(row=0, column=0)
 
-        sub_btn = tk.Button(self, text='-500', font=tkFont.Font(size=12), command=self.sub)
+        sub_btn = tk.Button(
+            self, text="-500", font=tkFont.Font(size=12), command=self.sub
+        )
         sub_btn.grid(row=2, column=0)
 
     def update_value(self):
-        self.weight_label.config(text=str(int(self.controller.cp_dict[self.key][self.controller.index])))
+        self.weight_label.config(
+            text=str(int(self.controller.cp_dict[self.key][self.controller.index]))
+        )
+
     def add(self):
         self.controller.cp_dict[self.key][self.controller.index] += 500
-        self.weight_label.config(text=str(int(self.controller.cp_dict[self.key][self.controller.index])))
-        
+        self.weight_label.config(
+            text=str(int(self.controller.cp_dict[self.key][self.controller.index]))
+        )
+
     def sub(self):
         self.controller.cp_dict[self.key][self.controller.index] -= 500
-        self.weight_label.config(text=str(int(self.controller.cp_dict[self.key][self.controller.index])))
+        self.weight_label.config(
+            text=str(int(self.controller.cp_dict[self.key][self.controller.index]))
+        )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
