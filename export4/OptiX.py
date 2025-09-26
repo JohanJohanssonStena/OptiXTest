@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 import sys
-import copy
 from scipy.optimize import linprog
 from scipy.linalg import block_diag
 import matplotlib.pyplot as plt
@@ -31,7 +30,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.17")
+        self.title("OptiX 1.1.15")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -1363,13 +1362,12 @@ class Start(tk.Frame):
             self.rec_["rec_description"] = rec_description
             self.first_run = False
 
-    def success_procent(self, index, W=None):
+    def success_procent(self, index):
         # std enligt SOCP-modell: sqrt(sum_j (sigma^2 * (x/W)^2))
-        if W is None:
-            W = self.controller.cp_dict["weight_out"][index]
         p = np.where(self.controller.rec_["rec_result_x"][index] != 0)
         test_std = self.controller.all_test_std[p, :][0]
         rec_result = self.controller.rec_["rec_result_x"][index][p]
+        W = self.controller.cp_dict["weight_out"][index]
 
         ratio = rec_result[:, np.newaxis] / W
         var_e = np.sum((ratio**2) * (test_std**2), axis=0)
@@ -1473,11 +1471,8 @@ class Start(tk.Frame):
 
         # Variabler
         x_vars = [cp.Variable(m, nonneg=True) for _ in range(n)]
-        t_vars = [cp.Variable() for _ in range(n)]  # cost per kg
-        # Slack variables for SOCP norms: t_socp[i][e_idx] >= norm(sigma * x)
-        t_socp = [[cp.Variable(nonneg=True) for _ in range(23)] for _ in range(n)]
         constraints = []
-        obj_terms = t_vars  # minimize sum of t_i
+        obj_terms = []
 
         # Globala regler
         global_cost_zero_idx = set()
@@ -1523,9 +1518,7 @@ class Start(tk.Frame):
         for i in range(n):
             x = x_vars[i]
             # Viktbalans
-            weight_var = cp.sum(x)
-            constraints.append(weight_var <= W[i])
-            constraints.append(weight_var >= 0.9 * W[i])
+            constraints.append(cp.sum(x) == W[i])
             # Toleranser
             for e in range(24):
                 mu = mu_all[:, e]
@@ -1622,8 +1615,7 @@ class Start(tk.Frame):
                 cost_vec[list(global_cost_zero_idx)] = 0.0
             if local_cost_zero_idx:
                 cost_vec[list(local_cost_zero_idx)] = 0.0
-            cost = cost_vec @ x
-            constraints.append(cost <= t_vars[i] * weight_var)
+            obj_terms.append(cost_vec @ x)
 
         problem = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
         try:
@@ -1656,8 +1648,6 @@ class Start(tk.Frame):
             rec_scrap_amount[i] = (xi / self.set_exchange)[p_idx]
             rec_scrap_result_x[i] = xi / self.set_exchange
             rec_result_x[i] = xi
-        actual_W = np.sum(xi)
-        if actual_W > 0:
             rec_alloy[i] = (
                 np.sum(
                     np.atleast_2d(
@@ -1665,10 +1655,8 @@ class Start(tk.Frame):
                     ),
                     axis=0,
                 )
-                / actual_W
+                / W[i]
             )
-        else:
-            rec_alloy[i] = np.zeros(24)
 
         self.rec_["n"] = n
         self.rec_["artnum"] = rec_artnum
