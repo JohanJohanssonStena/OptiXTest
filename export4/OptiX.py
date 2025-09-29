@@ -30,7 +30,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.15")
+        self.title("OptiX 1.1.17")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -48,13 +48,13 @@ class Application(tk.Tk):
         self.container.pack(fill="both", expand=True)
 
         # Initiera optimeringsinställningar tidigt så de kan användas i alla sidor
-        self.target_pct_var = tk.StringVar(value="70")
-        self.max_attempts_var = tk.StringVar(value="20")
+        self.target_pct_var = tk.StringVar(value="90")
+        self.max_attempts_var = tk.StringVar(value="200")
         self.band_width_var = tk.StringVar(value="9")
         self.lambda_u_var = tk.StringVar(value="1.0")
         self.lambda_v_var = tk.StringVar(value="1000000")
-        self.use_socp_var = tk.BooleanVar(value=False)
-        self.socp_solver_var = tk.StringVar(value="ECOS")
+        self.use_socp_var = tk.BooleanVar(value=True)
+        self.socp_solver_var = tk.StringVar(value="SCS")
 
         self.page1 = Window1(self.container, self)
         self.page2 = Window2(self.container, self)
@@ -1360,6 +1360,8 @@ class Start(tk.Frame):
             self.rec_["set_description"] = self.set_description
             self.rec_["set_artnum_p"] = self.set_artnum_p
             self.rec_["rec_description"] = rec_description
+            self.rec_["rec_p"] = [None] * n
+            self.rec_["rec_scrap_result_x_full"] = [None] * n
             self.first_run = False
 
     def success_procent(self, index):
