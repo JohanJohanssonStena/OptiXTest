@@ -30,7 +30,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.17")
+        self.title("OptiX 1.1.18")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -1541,8 +1541,8 @@ class Start(tk.Frame):
             # Add probability caps if present
             if hasattr(self.controller, "prob_caps") and i in self.controller.prob_caps:
                 for e, rhs in self.controller.prob_caps[i].items():
-                    row = sigma_all[:, e] ** 2
-                    constraints.append(cp.sum(cp.multiply(row, x)) <= rhs)
+                    sigma = sigma_all[:, e]
+                    constraints.append(cp.norm(cp.multiply(sigma, x), 2) <= np.sqrt(rhs))
             # Lokala regler
             local_rules = (
                 self.controller.lr_dict.get(i, [])
