@@ -30,7 +30,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.27")
+        self.title("OptiX 1.1.28")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -50,12 +50,12 @@ class Application(tk.Tk):
         # Initiera optimeringsinställningar tidigt så de kan användas i alla sidor
         self.target_pct_var = tk.StringVar(value="90")
         self.max_attempts_var = tk.StringVar(value="200")
-        self.band_width_var = tk.StringVar(value="9")
+        # self.band_width_var = tk.StringVar(value="9")
         self.lambda_u_var = tk.StringVar(value="1.0")
         self.lambda_v_var = tk.StringVar(value="1000000")
         self.use_socp_var = tk.BooleanVar(value=True)
         self.socp_solver_var = tk.StringVar(value="SCS")
-        self.lambda_sparse_var = tk.StringVar(value="0.01")
+        self.lambda_sparse_var = tk.StringVar(value="100")
 
         self.page1 = Window1(self.container, self)
         self.page2 = Window2(self.container, self)
@@ -97,12 +97,12 @@ class SettingsWindow(tk.Toplevel):
         tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(
             row=0, column=1, sticky="e", padx=6, pady=4
         )
-        tk.Label(prob_frame, text="Bandbredd %").grid(
+        """tk.Label(prob_frame, text="Bandbredd %").grid(
             row=1, column=0, sticky="w", padx=6, pady=4
         )
         tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(
             row=1, column=1, sticky="e", padx=6, pady=4
-        )
+        )"""
         tk.Label(prob_frame, text="Max försök").grid(
             row=2, column=0, sticky="w", padx=6, pady=4
         )
@@ -154,11 +154,11 @@ class SettingsWindow(tk.Toplevel):
 
         def reset_defaults():
             self.controller.target_pct_var.set("70")
-            self.controller.band_width_var.set("9")
+            # self.controller.band_width_var.set("9")
             self.controller.max_attempts_var.set("20")
             self.controller.lambda_u_var.set("1.0")
             self.controller.lambda_v_var.set("1000000")
-            self.controller.lambda_sparse_var.set("0.01")
+            self.controller.lambda_sparse_var.set("100")
             self.controller.use_socp_var.set(False)
             self.controller.socp_solver_var.set("ECOS")
 
