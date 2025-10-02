@@ -30,7 +30,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.18")
+        self.title("OptiX 1.1.27")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -55,6 +55,7 @@ class Application(tk.Tk):
         self.lambda_v_var = tk.StringVar(value="1000000")
         self.use_socp_var = tk.BooleanVar(value=True)
         self.socp_solver_var = tk.StringVar(value="SCS")
+        self.lambda_sparse_var = tk.StringVar(value="0.01")
 
         self.page1 = Window1(self.container, self)
         self.page2 = Window2(self.container, self)
@@ -75,9 +76,110 @@ class Application(tk.Tk):
         self.destroy()
 
 
+class SettingsWindow(tk.Toplevel):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self.title("Inställningar")
+        self.transient(controller)
+        self.grab_set()
+        self.resizable(True, True)
+        self.geometry("900x700")
+        self.minsize(900, 700)
+        pad = {"padx": 12, "pady": 8}
+
+        # Sektion: Sannolikhet
+        prob_frame = tk.LabelFrame(self, text="Sannolikhet", font=tkFont.Font(size=11))
+        prob_frame.grid(row=0, column=0, sticky="nsew", **pad)
+        tk.Label(prob_frame, text="Målvärde %").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(
+            row=0, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(prob_frame, text="Bandbredd %").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(
+            row=1, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(prob_frame, text="Max försök").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(
+            prob_frame, textvariable=self.controller.max_attempts_var, width=8
+        ).grid(row=2, column=1, sticky="e", padx=6, pady=4)
+
+        # Sektion: Optimering
+        opt_frame = tk.LabelFrame(self, text="Optimering", font=tkFont.Font(size=11))
+        opt_frame.grid(row=1, column=0, sticky="nsew", **pad)
+        tk.Checkbutton(
+            opt_frame, text="Optimera med SOCP", variable=self.controller.use_socp_var
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        tk.Label(opt_frame, text="Lösare").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        solver_menu = tk.OptionMenu(
+            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK"
+        )
+        solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
+
+        # Sektion: Slackvikter (Alternativ B)
+        slack_frame = tk.LabelFrame(
+            self, text="Slackvikter (Alternativ B)", font=tkFont.Font(size=11)
+        )
+        slack_frame.grid(row=2, column=0, sticky="nsew", **pad)
+        tk.Label(slack_frame, text="Lambda u").grid(
+            row=0, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(
+            row=0, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(slack_frame, text="Lambda v").grid(
+            row=1, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(
+            row=1, column=1, sticky="e", padx=6, pady=4
+        )
+        tk.Label(slack_frame, text="Lambda Sparse").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        tk.Entry(slack_frame, textvariable=self.controller.lambda_sparse_var, width=10).grid(
+            row=2, column=1, sticky="e", padx=6, pady=4
+        )
+
+        # Knappar
+        btn_frame = tk.Frame(self)
+        btn_frame.grid(row=3, column=0, sticky="e", **pad)
+
+        def reset_defaults():
+            self.controller.target_pct_var.set("70")
+            self.controller.band_width_var.set("9")
+            self.controller.max_attempts_var.set("20")
+            self.controller.lambda_u_var.set("1.0")
+            self.controller.lambda_v_var.set("1000000")
+            self.controller.lambda_sparse_var.set("0.01")
+            self.controller.use_socp_var.set(False)
+            self.controller.socp_solver_var.set("ECOS")
+
+        def apply_and_close():
+            self.destroy()
+
+        tk.Button(btn_frame, text="Återställ", command=reset_defaults).grid(
+            row=0, column=0, padx=5
+        )
+        tk.Button(btn_frame, text="Stäng", command=self.destroy).grid(
+            row=0, column=1, padx=5
+        )
+        tk.Button(btn_frame, text="Verkställ", command=apply_and_close).grid(
+            row=0, column=2, padx=5
+        )
+
+
 class Window1(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
+        self.controller = controller
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
         self.columnconfigure(2, weight=1)
@@ -127,94 +229,7 @@ class Window1(tk.Frame):
         controller.rec_ = frame_start.rec_
 
     def open_settings(self):
-        win = tk.Toplevel(self)
-        win.title("Inställningar")
-        win.transient(self.winfo_toplevel())
-        win.grab_set()
-        win.resizable(True, True)
-        win.geometry("900x700")
-        win.minsize(900, 700)
-        pad = {"padx": 12, "pady": 8}
-
-        # Sektion: Sannolikhet
-        prob_frame = tk.LabelFrame(win, text="Sannolikhet", font=tkFont.Font(size=11))
-        prob_frame.grid(row=0, column=0, sticky="nsew", **pad)
-        tk.Label(prob_frame, text="Målvärde %").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(
-            row=0, column=1, sticky="e", padx=6, pady=4
-        )
-        tk.Label(prob_frame, text="Bandbredd %").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(
-            row=1, column=1, sticky="e", padx=6, pady=4
-        )
-        tk.Label(prob_frame, text="Max försök").grid(
-            row=2, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(
-            prob_frame, textvariable=self.controller.max_attempts_var, width=8
-        ).grid(row=2, column=1, sticky="e", padx=6, pady=4)
-
-        # Sektion: Optimering
-        opt_frame = tk.LabelFrame(win, text="Optimering", font=tkFont.Font(size=11))
-        opt_frame.grid(row=1, column=0, sticky="nsew", **pad)
-        tk.Checkbutton(
-            opt_frame, text="Optimera med SOCP", variable=self.controller.use_socp_var
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=4)
-        tk.Label(opt_frame, text="Lösare").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
-        )
-        solver_menu = tk.OptionMenu(
-            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK"
-        )
-        solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
-
-        # Sektion: Slackvikter (Alternativ B)
-        slack_frame = tk.LabelFrame(
-            win, text="Slackvikter (Alternativ B)", font=tkFont.Font(size=11)
-        )
-        slack_frame.grid(row=2, column=0, sticky="nsew", **pad)
-        tk.Label(slack_frame, text="Lambda u").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(
-            row=0, column=1, sticky="e", padx=6, pady=4
-        )
-        tk.Label(slack_frame, text="Lambda v").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(
-            row=1, column=1, sticky="e", padx=6, pady=4
-        )
-
-        # Knappar
-        btn_frame = tk.Frame(win)
-        btn_frame.grid(row=3, column=0, sticky="e", **pad)
-
-        def reset_defaults():
-            self.controller.target_pct_var.set("90")
-            self.controller.band_width_var.set("9")
-            self.controller.max_attempts_var.set("200")
-            self.controller.lambda_u_var.set("1.0")
-            self.controller.lambda_v_var.set("1000000")
-            self.controller.use_socp_var.set(True)
-            self.controller.socp_solver_var.set("SCS")
-
-        def apply_and_close():
-            win.destroy()
-
-        tk.Button(btn_frame, text="Återställ", command=reset_defaults).grid(
-            row=0, column=0, padx=5
-        )
-        tk.Button(btn_frame, text="Stäng", command=win.destroy).grid(
-            row=0, column=1, padx=5
-        )
-        tk.Button(btn_frame, text="Verkställ", command=apply_and_close).grid(
-            row=0, column=2, padx=5
-        )
+        SettingsWindow(self, self.controller)
 
 
 class InputForm(tk.Frame):
@@ -1413,9 +1428,8 @@ class Start(tk.Frame):
                 self.controller.rec_["cost"][p]
                 * self.controller.rec_["rec_result_x"][index][p]
             )
-        / self.controller.cp_dict["weight_out"][index]
-
-    )
+            / self.controller.cp_dict["weight_out"][index]
+        )
 
     def _calculate_succ_cost(self):
         setattr(self.controller, self.rec_key, self.rec_)
@@ -1617,7 +1631,11 @@ class Start(tk.Frame):
                 cost_vec[list(global_cost_zero_idx)] = 0.0
             if local_cost_zero_idx:
                 cost_vec[list(local_cost_zero_idx)] = 0.0
-            obj_terms.append(cost_vec @ x)
+        try:
+            lambda_sparse = float(self.controller.lambda_sparse_var.get())
+        except Exception:
+            lambda_sparse = 0.01
+        obj_terms.append(cost_vec @ x + lambda_sparse * cp.norm(x, 1))
 
         problem = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
         try:
@@ -1914,94 +1932,9 @@ class Window2(tk.Frame):
         # --- OPTIX_TARGET_DEFAULT END ---
 
     def open_settings(self):
-        win = tk.Toplevel(self)
-        win.title("Inställningar")
-        win.transient(self.winfo_toplevel())
-        win.grab_set()
-        win.resizable(True, True)
-        win.geometry("900x700")
-        win.minsize(900, 700)
-        pad = {"padx": 12, "pady": 8}
+        SettingsWindow(self, self.controller)
 
-        # Sektion: Sannolikhet
-        prob_frame = tk.LabelFrame(win, text="Sannolikhet", font=tkFont.Font(size=11))
-        prob_frame.grid(row=0, column=0, sticky="nsew", **pad)
-        tk.Label(prob_frame, text="Målvärde %").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(prob_frame, textvariable=self.controller.target_pct_var, width=8).grid(
-            row=0, column=1, sticky="e", padx=6, pady=4
-        )
-        tk.Label(prob_frame, text="Bandbredd %").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(prob_frame, textvariable=self.controller.band_width_var, width=8).grid(
-            row=1, column=1, sticky="e", padx=6, pady=4
-        )
-        tk.Label(prob_frame, text="Max försök").grid(
-            row=2, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(
-            prob_frame, textvariable=self.controller.max_attempts_var, width=8
-        ).grid(row=2, column=1, sticky="e", padx=6, pady=4)
 
-        # Sektion: Optimering
-        opt_frame = tk.LabelFrame(win, text="Optimering", font=tkFont.Font(size=11))
-        opt_frame.grid(row=1, column=0, sticky="nsew", **pad)
-        tk.Checkbutton(
-            opt_frame, text="Optimera med SOCP", variable=self.controller.use_socp_var
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=4)
-        tk.Label(opt_frame, text="Lösare").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
-        )
-        solver_menu = tk.OptionMenu(
-            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK"
-        )
-        solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
-
-        # Sektion: Slackvikter (Alternativ B)
-        slack_frame = tk.LabelFrame(
-            win, text="Slackvikter (Alternativ B)", font=tkFont.Font(size=11)
-        )
-        slack_frame.grid(row=2, column=0, sticky="nsew", **pad)
-        tk.Label(slack_frame, text="Lambda u").grid(
-            row=0, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_u_var, width=10).grid(
-            row=0, column=1, sticky="e", padx=6, pady=4
-        )
-        tk.Label(slack_frame, text="Lambda v").grid(
-            row=1, column=0, sticky="w", padx=6, pady=4
-        )
-        tk.Entry(slack_frame, textvariable=self.controller.lambda_v_var, width=10).grid(
-            row=1, column=1, sticky="e", padx=6, pady=4
-        )
-
-        # Knappar
-        btn_frame = tk.Frame(win)
-        btn_frame.grid(row=3, column=0, sticky="e", **pad)
-
-        def reset_defaults():
-            self.controller.target_pct_var.set("70")
-            self.controller.band_width_var.set("9")
-            self.controller.max_attempts_var.set("20")
-            self.controller.lambda_u_var.set("1.0")
-            self.controller.lambda_v_var.set("1000000")
-            self.controller.use_socp_var.set(False)
-            self.controller.socp_solver_var.set("ECOS")
-
-        def apply_and_close():
-            win.destroy()
-
-        tk.Button(btn_frame, text="Återställ", command=reset_defaults).grid(
-            row=0, column=0, padx=5
-        )
-        tk.Button(btn_frame, text="Stäng", command=win.destroy).grid(
-            row=0, column=1, padx=5
-        )
-        tk.Button(btn_frame, text="Verkställ", command=apply_and_close).grid(
-            row=0, column=2, padx=5
-        )
 
 
 class GoBack1(tk.Frame):
@@ -2208,13 +2141,20 @@ class Window3(tk.Frame):
 
         controller.text_list4 = frame_listbox4.text_list
 
+    def open_settings(self):
+        SettingsWindow(self, self.controller)
+
 
 class GoBack2(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self.go_back = tk.Button(self, text="<-", command=self.go_b)
-        self.go_back.pack(anchor="nw", padx=5, pady=5)
+        row_frame = tk.Frame(self)
+        row_frame.pack(anchor="nw", padx=5, pady=5)
+        self.go_back = tk.Button(row_frame, text="<-", font=tkFont.Font(size=12), command=self.go_b)
+        self.go_back.pack(side="left")
+        self.settings_btn = tk.Button(row_frame, text="⚙", font=tkFont.Font(size=12), command=parent.open_settings)
+        self.settings_btn.pack(side="left", padx=(8, 0))
 
     def go_b(self):
         self.controller.show_page(self.controller.page2)
