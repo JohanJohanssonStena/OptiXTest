@@ -30,7 +30,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.28")
+        self.title("OptiX 1.1.37")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -55,7 +55,9 @@ class Application(tk.Tk):
         self.lambda_v_var = tk.StringVar(value="1000000")
         self.use_socp_var = tk.BooleanVar(value=True)
         self.socp_solver_var = tk.StringVar(value="SCS")
+        # Add ECOS_BB as a solver option
         self.lambda_sparse_var = tk.StringVar(value="100")
+        self.min_amount_var = tk.StringVar(value="0")
 
         self.page1 = Window1(self.container, self)
         self.page2 = Window2(self.container, self)
@@ -120,9 +122,11 @@ class SettingsWindow(tk.Toplevel):
             row=1, column=0, sticky="w", padx=6, pady=4
         )
         solver_menu = tk.OptionMenu(
-            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK"
+            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK", "ECOS_BB"
         )
         solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
+        tk.Label(opt_frame, text="Minimum Amount").grid(row=2, column=0, sticky="w", padx=6, pady=4)
+        tk.Entry(opt_frame, textvariable=self.controller.min_amount_var, width=10).grid(row=2, column=1, sticky="e", padx=6, pady=4)
 
         # Sektion: Slackvikter (Alternativ B)
         slack_frame = tk.LabelFrame(
@@ -161,6 +165,7 @@ class SettingsWindow(tk.Toplevel):
             self.controller.lambda_sparse_var.set("100")
             self.controller.use_socp_var.set(False)
             self.controller.socp_solver_var.set("ECOS")
+            self.controller.min_amount_var.set("0")
 
         def apply_and_close():
             self.destroy()
@@ -1468,11 +1473,23 @@ class Start(tk.Frame):
             if hasattr(self.controller, "socp_solver_var")
             else "SCS"
         )
-        solver_map = {"ECOS": cp.ECOS, "SCS": cp.SCS}
+        solver_map = {"ECOS": cp.ECOS, "SCS": cp.SCS, "ECOS_BB": cp.ECOS_BB}
         solver = solver_map.get(solver_name, cp.SCS)
+        try:
+            min_amount = float(self.controller.min_amount_var.get())
+        except Exception:
+            min_amount = 0.0
+        if min_amount > 0 and solver_name not in ("MOSEK", "ECOS_BB"):
+            messagebox.showerror("SOCP Error", "min_amount > 0 requires MOSEK or ECOS_BB solver. Please select MOSEK, ECOS_BB or set min_amount to 0.")
+            raise RuntimeError("Incompatible solver for min_amount > 0")
         if solver_name == "MOSEK":
             try:
                 solver = cp.MOSEK
+            except Exception:
+                solver = cp.SCS
+        elif solver_name == "ECOS_BB":
+            try:
+                solver = cp.ECOS_BB
             except Exception:
                 solver = cp.SCS
 
@@ -1486,9 +1503,23 @@ class Start(tk.Frame):
         z = norm.ppf(p_e)
 
         # Variabler
-        x_vars = [cp.Variable(m, nonneg=True) for _ in range(n)]
+        try:
+            min_amount = float(self.controller.min_amount_var.get())
+        except Exception:
+            min_amount = 0.0
+        x_vars = [cp.Variable(m) for _ in range(n)]
         constraints = []
         obj_terms = []
+        if min_amount > 0:
+            y_vars = [cp.Variable(m, boolean=True) for _ in range(n)]
+            big_M = 1e6
+            for i in range(n):
+                for j in range(m):
+                    constraints.append(x_vars[i][j] >= min_amount * y_vars[i][j])
+                    constraints.append(x_vars[i][j] <= big_M * y_vars[i][j])
+        else:
+            for i in range(n):
+                constraints.append(x_vars[i] >= min_amount)
 
         # Globala regler
         global_cost_zero_idx = set()
