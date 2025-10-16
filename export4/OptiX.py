@@ -157,14 +157,14 @@ class SettingsWindow(tk.Toplevel):
         btn_frame.grid(row=3, column=0, sticky="e", **pad)
 
         def reset_defaults():
-            self.controller.target_pct_var.set("70")
+            self.controller.target_pct_var.set("90")
             # self.controller.band_width_var.set("9")
-            self.controller.max_attempts_var.set("20")
+            self.controller.max_attempts_var.set("200")
             self.controller.lambda_u_var.set("1.0")
             self.controller.lambda_v_var.set("1000000")
             self.controller.lambda_sparse_var.set("100")
-            self.controller.use_socp_var.set(False)
-            self.controller.socp_solver_var.set("ECOS")
+            self.controller.use_socp_var.set(True)
+            self.controller.socp_solver_var.set("SCS")
             self.controller.min_amount_var.set("0")
 
         def apply_and_close():
