@@ -15,10 +15,15 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from scipy.stats import norm
 from datetime import datetime
 
-try:
-    import cvxpy as cp
+
+try:   
+   import cvxpy as cp
 except ImportError:
-    cp = None
+   cp = None
+try:
+    import mosek.fusion as mf
+except ImportError:
+    mf = None
 
 
 def main():
@@ -30,7 +35,7 @@ def main():
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OptiX 1.1.37")
+        self.title("OptiX 1.1.41")
         self.geometry("1380x800")
 
         if getattr(sys, "frozen", False):
@@ -55,6 +60,7 @@ class Application(tk.Tk):
         self.lambda_v_var = tk.StringVar(value="1000000")
         self.use_socp_var = tk.BooleanVar(value=True)
         self.socp_solver_var = tk.StringVar(value="SCS")
+        self.socp_method_var = tk.StringVar(value="cvxpy")
         # Add ECOS_BB as a solver option
         self.lambda_sparse_var = tk.StringVar(value="100")
         self.min_amount_var = tk.StringVar(value="0")
@@ -122,11 +128,18 @@ class SettingsWindow(tk.Toplevel):
             row=1, column=0, sticky="w", padx=6, pady=4
         )
         solver_menu = tk.OptionMenu(
-            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK", "ECOS_BB"
+            opt_frame, self.controller.socp_solver_var, "ECOS", "SCS", "MOSEK", "ECOS_BB", "XPRESS"
         )
         solver_menu.grid(row=1, column=1, sticky="e", padx=6, pady=4)
-        tk.Label(opt_frame, text="Minimum Amount").grid(row=2, column=0, sticky="w", padx=6, pady=4)
-        tk.Entry(opt_frame, textvariable=self.controller.min_amount_var, width=10).grid(row=2, column=1, sticky="e", padx=6, pady=4)
+        tk.Label(opt_frame, text="Metod").grid(
+            row=2, column=0, sticky="w", padx=6, pady=4
+        )
+        method_menu = tk.OptionMenu(
+            opt_frame, self.controller.socp_method_var, "cvxpy", "mosek"
+        )
+        method_menu.grid(row=2, column=1, sticky="e", padx=6, pady=4)
+        tk.Label(opt_frame, text="Minimum Amount").grid(row=3, column=0, sticky="w", padx=6, pady=4)
+        tk.Entry(opt_frame, textvariable=self.controller.min_amount_var, width=10).grid(row=3, column=1, sticky="e", padx=6, pady=4)
 
         # Sektion: Slackvikter (Alternativ B)
         slack_frame = tk.LabelFrame(
@@ -1467,20 +1480,453 @@ class Start(tk.Frame):
         mu_all = self.set_mean_final  # (m,24)
         sigma_all = self.controller.all_test_std  # (m,24)
 
+        method_var = self.controller.socp_method_var.get()
+        if method_var == "mosek":
+            # mosek code
+            if mf is None:
+                messagebox.showerror("MOSEK saknas", "mosek.fusion kunde inte importeras. Installera MOSEK och mosek.fusion för att använda MOSEK-läget.")
+                raise RuntimeError("mosek not available")
+            # z
+            try:
+                target_prob = float(self.controller.target_pct_var.get()) / 100.0
+            except Exception:
+                target_prob = 0.70
+            K = len([e for e in range(24) if e not in (4, 22)])
+            p_e = target_prob ** (1.0 / K)
+            z = norm.ppf(p_e)
+            # lambda_sparse
+            try:
+                lambda_sparse = float(self.controller.lambda_sparse_var.get())
+            except Exception:
+                lambda_sparse = 0.01
+            # min_amount
+            try:
+                min_amount = float(self.controller.min_amount_var.get())
+            except Exception:
+                min_amount = 0.0
+            # global_cost_zero_idx etc
+            global_cost_zero_idx = set()
+            global_limits = []  # (typ, j, val)
+            manual_rule = (
+                list(self.controller.text_list2.get(0, tk.END))
+                if hasattr(self.controller, "text_list2")
+                else []
+            )
+            for s in manual_rule:
+                parts = s.strip().split()
+                if len(parts) < 2:
+                    continue
+                art = parts[0].upper()
+                cmd = parts[1].upper()
+                amt = float(parts[2].replace(",", ".")) if len(parts) > 2 else 0.0
+                idx = np.where(self.set_artnum_p == art)[0]
+                if idx.size == 0 and art.endswith("P"):
+                    idx = np.where(self.set_artnum_p.astype("U16") == art)[0]
+                if idx.size == 0:
+                    continue
+                j = int(idx[0])
+                if cmd == "COST0":
+                    global_cost_zero_idx.add(j)
+                elif cmd in ("MAX", "MIN", "="):
+                    val = amt * float(self.set_exchange[j])
+                    if cmd == "MAX":
+                        global_limits.append(("<=", j, val))
+                    elif cmd == "MIN":
+                        global_limits.append((">=", j, val))
+                    else:
+                        global_limits.append(("==", j, val))
+            # Model
+            model = mf.Model()
+            x_vars = [model.variable(m, mf.Domain.greaterThan(0.0)) for _ in range(n)]
+            if min_amount > 0:
+                y_vars = [model.variable(m, mf.Domain.binary()) for _ in range(n)]
+                big_M = 1e6
+                for i in range(n):
+                    for j in range(m):
+                        model.constraint(x_vars[i].index(j), mf.Domain.greaterThan(min_amount * y_vars[i].index(j)))
+                        model.constraint(x_vars[i].index(j), mf.Domain.lessThan(big_M * y_vars[i].index(j)))
+            else:
+                for i in range(n):
+                    model.constraint(x_vars[i], mf.Domain.greaterThan(min_amount))
+            t_vars = {}
+            for i in range(n):
+                for e in range(24):
+                    if e in (4,22):
+                        continue
+                    t_vars[(i,e)] = model.variable(1, mf.Domain.greaterThan(0.0))
+            # Inventory
+            for j in range(m):
+                model.constraint(mf.Expr.sum([x_vars[i].index(j) for i in range(n)]), mf.Domain.lessThan(self.sum_quantity[j]))
+            # Per recipe
+            for i in range(n):
+                x = x_vars[i]
+                # Weight balance
+                model.constraint(mf.Expr.sum(x), mf.Domain.equalsTo(W[i]))
+                # Tolerances
+                for e in range(24):
+                    mu = mu_all[:, e]
+                    if np.isfinite(tol_max[i][e]):
+                        model.constraint(mf.Expr.dot(mu, x), mf.Domain.lessThan(W[i] * tol_max[i][e]))
+                    if np.isfinite(tol_min[i][e]):
+                        model.constraint(mf.Expr.dot(mu, x), mf.Domain.greaterThan(W[i] * tol_min[i][e]))
+                # SOCP
+                for e in range(24):
+                    if e in (4,22):
+                        continue
+                    mu = mu_all[:, e]
+                    sigma = sigma_all[:, e]
+                    t = t_vars[(i,e)]
+                    model.constraint(mf.Expr.vstack(t, mf.Expr.mulElm(sigma, x)), mf.Domain.inQCone())
+                    rhs = (W[i] * outer_max[i][e] - mf.Expr.dot(mu, x)) / z
+                    model.constraint(t, mf.Domain.lessThan(rhs))
+                # Prob caps
+                if hasattr(self.controller, "prob_caps") and i in self.controller.prob_caps:
+                    for e, rhs in self.controller.prob_caps[i].items():
+                        sigma = sigma_all[:, e]
+                        t_cap = model.variable(1, mf.Domain.greaterThan(0.0))
+                        model.constraint(mf.Expr.vstack(t_cap, mf.Expr.mulElm(sigma, x)), mf.Domain.inQCone())
+                        model.constraint(t_cap, mf.Domain.lessThan(np.sqrt(rhs)))
+                # Local rules
+                local_rules = (
+                    self.controller.lr_dict.get(i, [])
+                    if hasattr(self.controller, "lr_dict")
+                    and isinstance(self.controller.lr_dict, dict)
+                    else []
+                )
+                local_cost_zero_idx = set()
+                local_limits = []
+                local_allow_idx = set()
+                for s in local_rules:
+                    parts = s.strip().split()
+                    if len(parts) < 2:
+                        continue
+                    art = parts[0].upper()
+                    cmd = parts[1].upper()
+                    amt = float(parts[2].replace(",", ".")) if len(parts) > 2 else 0.0
+                    idx = np.where(self.set_artnum_p == art)[0]
+                    if idx.size == 0 and art.endswith("P"):
+                        idx = np.where(self.set_artnum_p.astype("U16") == art)[0]
+                    if idx.size == 0:
+                        continue
+                    j = int(idx[0])
+                    if cmd == "COST0":
+                        local_cost_zero_idx.add(j)
+                    elif cmd in ("MAX", "MIN", "="):
+                        val = amt * float(self.set_exchange[j])
+                        if cmd == "MAX":
+                            local_limits.append(("<=", j, val))
+                        elif cmd == "MIN":
+                            local_limits.append((">=", j, val))
+                        else:
+                            local_limits.append(("==", j, val))
+                    elif cmd == "ALLOW":
+                        local_allow_idx.add(j)
+                # Global limits
+                recipe = self.recipe_list[i]
+                try:
+                    first_segment = int(recipe.split('-')[0])
+                    in_range = 40000 <= first_segment <= 44300
+                except ValueError:
+                    in_range = False
+                for typ, j, val in global_limits:
+                    if self.set_artnum_p[j] == '801' and not in_range:
+                        continue
+                    if j not in local_allow_idx:
+                        if typ == "<=":
+                            model.constraint(x.index(j), mf.Domain.lessThan(val))
+                        elif typ == ">=":
+                            model.constraint(x.index(j), mf.Domain.greaterThan(val))
+                        else:
+                            model.constraint(x.index(j), mf.Domain.equalsTo(val))
+                if in_range:
+                    try:
+                        j801 = np.where(self.set_artnum_p == '801')[0][0]
+                        if j801 not in local_allow_idx:
+                            model.constraint(x.index(j801), mf.Domain.lessThan(0))
+                    except IndexError:
+                        pass
+                for typ, j, val in local_limits:
+                    if typ == "<=":
+                        model.constraint(x.index(j), mf.Domain.lessThan(val))
+                    elif typ == ">=":
+                        model.constraint(x.index(j), mf.Domain.greaterThan(val))
+                    else:
+                        model.constraint(x.index(j), mf.Domain.equalsTo(val))
+                # Cost vec
+                cost_vec = cost_base.copy()
+                if global_cost_zero_idx:
+                    cost_vec[list(global_cost_zero_idx)] = 0.0
+                if local_cost_zero_idx:
+                    cost_vec[list(local_cost_zero_idx)] = 0.0
+            # Objective
+            obj_expr = mf.Expr.sum([mf.Expr.dot(cost_vec, x_vars[i]) + lambda_sparse * mf.Expr.sum(mf.Expr.abs(x_vars[i])) for i in range(n)])
+            model.objective(mf.ObjectiveSense.Minimize, obj_expr)
+            # Solve
+            model.solve()
+            if model.getProblemStatus() != mf.ProblemStatus.Optimal:
+                messagebox.showerror("MOSEK-fel", f"MOSEK returnerade status: {model.getProblemStatus()}")
+                raise RuntimeError("MOSEK not optimal")
+            # Results
+            rec_artnum = [None] * n
+            rec_amount = [None] * n
+            rec_scrap_amount = [None] * n
+            rec_alloy = [None] * n
+            rec_result_x = [None] * n
+            rec_scrap_result_x = [None] * n
+            rec_description = [None] * n
+            for i in range(n):
+                xi = np.array([x_vars[i].index(j).level()[0] for j in range(m)])
+                xi[abs(xi) < 1e-6] = 0.0
+                p_idx = np.where(xi != 0)[0]
+                rec_artnum[i] = self.set_artnum_p[p_idx]
+                rec_description[i] = self.set_description[p_idx]
+                rec_amount[i] = xi[p_idx]
+                rec_scrap_amount[i] = (xi / self.set_exchange)[p_idx]
+                rec_scrap_result_x[i] = xi / self.set_exchange
+                rec_result_x[i] = xi
+                rec_alloy[i] = (
+                    np.sum(
+                        np.atleast_2d(
+                            self.set_mean_final[p_idx, :] * rec_amount[i][:, np.newaxis]
+                        ),
+                        axis=0,
+                    )
+                    / W[i]
+                )
+            self.rec_["n"] = n
+            self.rec_["artnum"] = rec_artnum
+            self.rec_["amount"] = rec_amount
+            self.rec_["scrap_amount"] = rec_scrap_amount
+            self.rec_["alloy"] = rec_alloy
+            self.rec_["rec_scrap_result_x"] = rec_scrap_result_x
+            self.rec_["rec_result_x"] = rec_result_x
+            self.rec_["cost"] = self.set_cost
+            self.rec_["set_description"] = self.set_description
+            self.rec_["set_artnum_p"] = self.set_artnum_p
+            self.rec_["rec_description"] = rec_description
+        # mosek code
+        if mf is None:
+            messagebox.showerror("MOSEK saknas", "mosek.fusion kunde inte importeras. Installera MOSEK och mosek.fusion för att använda MOSEK-läget.")
+            raise RuntimeError("mosek not available")
+        # z
+        try:
+            target_prob = float(self.controller.target_pct_var.get()) / 100.0
+        except Exception:
+            target_prob = 0.70
+        K = len([e for e in range(24) if e not in (4, 22)])
+        p_e = target_prob ** (1.0 / K)
+        z = norm.ppf(p_e)
+        # lambda_sparse
+        try:
+            lambda_sparse = float(self.controller.lambda_sparse_var.get())
+        except Exception:
+            lambda_sparse = 0.01
+        # global_cost_zero_idx etc
+        global_cost_zero_idx = set()
+        global_limits = []  # (typ, j, val)
+        manual_rule = (
+            list(self.controller.text_list2.get(0, tk.END))
+            if hasattr(self.controller, "text_list2")
+            else []
+        )
+        for s in manual_rule:
+            parts = s.strip().split()
+            if len(parts) < 2:
+                continue
+            art = parts[0].upper()
+            cmd = parts[1].upper()
+            amt = float(parts[2].replace(",", ".")) if len(parts) > 2 else 0.0
+            idx = np.where(self.set_artnum_p == art)[0]
+            if idx.size == 0 and art.endswith("P"):
+                idx = np.where(self.set_artnum_p.astype("U16") == art)[0]
+            if idx.size == 0:
+                continue
+            j = int(idx[0])
+            if cmd == "COST0":
+                global_cost_zero_idx.add(j)
+            elif cmd in ("MAX", "MIN", "="):
+                val = amt * float(self.set_exchange[j])
+                if cmd == "MAX":
+                    global_limits.append(("<=", j, val))
+                elif cmd == "MIN":
+                    global_limits.append((">=", j, val))
+                else:
+                    global_limits.append(("==", j, val))
+        # Model
+        model = mf.Model()
+        x_vars = [model.variable(m, mf.Domain.greaterThan(0.0)) for _ in range(n)]
+        t_vars = {}
+        for i in range(n):
+            for e in range(24):
+                if e in (4,22):
+                    continue
+                t_vars[(i,e)] = model.variable(1, mf.Domain.greaterThan(0.0))
+        # Inventory
+        for j in range(m):
+            model.constraint(mf.Expr.sum([x_vars[i].index(j) for i in range(n)]), mf.Domain.lessThan(self.sum_quantity[j]))
+        # Per recipe
+        for i in range(n):
+            x = x_vars[i]
+            # Weight balance
+            model.constraint(mf.Expr.sum(x), mf.Domain.equalsTo(W[i]))
+            # Tolerances
+            for e in range(24):
+                mu = mu_all[:, e]
+                if np.isfinite(tol_max[i][e]):
+                    model.constraint(mf.Expr.dot(mu, x), mf.Domain.lessThan(W[i] * tol_max[i][e]))
+                if np.isfinite(tol_min[i][e]):
+                    model.constraint(mf.Expr.dot(mu, x), mf.Domain.greaterThan(W[i] * tol_min[i][e]))
+            # SOCP
+            for e in range(24):
+                if e in (4,22):
+                    continue
+                mu = mu_all[:, e]
+                sigma = sigma_all[:, e]
+                t = t_vars[(i,e)]
+                model.constraint(mf.Expr.vstack(t, mf.Expr.mulElm(sigma, x)), mf.Domain.inQCone())
+                rhs = (W[i] * outer_max[i][e] - mf.Expr.dot(mu, x)) / z
+                model.constraint(t, mf.Domain.lessThan(rhs))
+            # Prob caps
+            if hasattr(self.controller, "prob_caps") and i in self.controller.prob_caps:
+                for e, rhs in self.controller.prob_caps[i].items():
+                    sigma = sigma_all[:, e]
+                    t_cap = model.variable(1, mf.Domain.greaterThan(0.0))
+                    model.constraint(mf.Expr.vstack(t_cap, mf.Expr.mulElm(sigma, x)), mf.Domain.inQCone())
+                    model.constraint(t_cap, mf.Domain.lessThan(np.sqrt(rhs)))
+            # Local rules
+            local_rules = (
+                self.controller.lr_dict.get(i, [])
+                if hasattr(self.controller, "lr_dict")
+                and isinstance(self.controller.lr_dict, dict)
+                else []
+            )
+            local_cost_zero_idx = set()
+            local_limits = []
+            local_allow_idx = set()
+            for s in local_rules:
+                parts = s.strip().split()
+                if len(parts) < 2:
+                    continue
+                art = parts[0].upper()
+                cmd = parts[1].upper()
+                amt = float(parts[2].replace(",", ".")) if len(parts) > 2 else 0.0
+                idx = np.where(self.set_artnum_p == art)[0]
+                if idx.size == 0 and art.endswith("P"):
+                    idx = np.where(self.set_artnum_p.astype("U16") == art)[0]
+                if idx.size == 0:
+                    continue
+                j = int(idx[0])
+                if cmd == "COST0":
+                    local_cost_zero_idx.add(j)
+                elif cmd in ("MAX", "MIN", "="):
+                    val = amt * float(self.set_exchange[j])
+                    if cmd == "MAX":
+                        local_limits.append(("<=", j, val))
+                    elif cmd == "MIN":
+                        local_limits.append((">=", j, val))
+                    else:
+                        local_limits.append(("==", j, val))
+                elif cmd == "ALLOW":
+                    local_allow_idx.add(j)
+            # Global limits
+            recipe = self.recipe_list[i]
+            try:
+                first_segment = int(recipe.split('-')[0])
+                in_range = 40000 <= first_segment <= 44300
+            except ValueError:
+                in_range = False
+            for typ, j, val in global_limits:
+                if self.set_artnum_p[j] == '801' and not in_range:
+                    continue
+                if j not in local_allow_idx:
+                    if typ == "<=":
+                        model.constraint(x.index(j), mf.Domain.lessThan(val))
+                    elif typ == ">=":
+                        model.constraint(x.index(j), mf.Domain.greaterThan(val))
+                    else:
+                        model.constraint(x.index(j), mf.Domain.equalsTo(val))
+            if in_range:
+                try:
+                    j801 = np.where(self.set_artnum_p == '801')[0][0]
+                    if j801 not in local_allow_idx:
+                        model.constraint(x.index(j801), mf.Domain.lessThan(0))
+                except IndexError:
+                    pass
+            for typ, j, val in local_limits:
+                if typ == "<=":
+                    model.constraint(x.index(j), mf.Domain.lessThan(val))
+                elif typ == ">=":
+                    model.constraint(x.index(j), mf.Domain.greaterThan(val))
+                else:
+                    model.constraint(x.index(j), mf.Domain.equalsTo(val))
+            # Cost vec
+            cost_vec = cost_base.copy()
+            if global_cost_zero_idx:
+                cost_vec[list(global_cost_zero_idx)] = 0.0
+            if local_cost_zero_idx:
+                cost_vec[list(local_cost_zero_idx)] = 0.0
+        # Objective
+        obj_expr = mf.Expr.sum([mf.Expr.dot(cost_vec, x_vars[i]) + lambda_sparse * mf.Expr.sum(mf.Expr.abs(x_vars[i])) for i in range(n)])
+        model.objective(mf.ObjectiveSense.Minimize, obj_expr)
+        # Solve
+        model.solve()
+        if model.getProblemStatus() != mf.ProblemStatus.Optimal:
+            messagebox.showerror("MOSEK-fel", f"MOSEK returnerade status: {model.getProblemStatus()}")
+            raise RuntimeError("MOSEK not optimal")
+        # Results
+        rec_artnum = [None] * n
+        rec_amount = [None] * n
+        rec_scrap_amount = [None] * n
+        rec_alloy = [None] * n
+        rec_result_x = [None] * n
+        rec_scrap_result_x = [None] * n
+        rec_description = [None] * n
+        for i in range(n):
+            xi = np.array([x_vars[i].index(j).level()[0] for j in range(m)])
+            xi[abs(xi) < 1e-6] = 0.0
+            p_idx = np.where(xi != 0)[0]
+            rec_artnum[i] = self.set_artnum_p[p_idx]
+            rec_description[i] = self.set_description[p_idx]
+            rec_amount[i] = xi[p_idx]
+            rec_scrap_amount[i] = (xi / self.set_exchange)[p_idx]
+            rec_scrap_result_x[i] = xi / self.set_exchange
+            rec_result_x[i] = xi
+            rec_alloy[i] = (
+                np.sum(
+                    np.atleast_2d(
+                        self.set_mean_final[p_idx, :] * rec_amount[i][:, np.newaxis]
+                    ),
+                    axis=0,
+                )
+                / W[i]
+            )
+        self.rec_["n"] = n
+        self.rec_["artnum"] = rec_artnum
+        self.rec_["amount"] = rec_amount
+        self.rec_["scrap_amount"] = rec_scrap_amount
+        self.rec_["alloy"] = rec_alloy
+        self.rec_["rec_scrap_result_x"] = rec_scrap_result_x
+        self.rec_["rec_result_x"] = rec_result_x
+        self.rec_["cost"] = self.set_cost
+        self.rec_["set_description"] = self.set_description
+        self.rec_["set_artnum_p"] = self.set_artnum_p
+        self.rec_["rec_description"] = rec_description
+        #else:
+        # cvxpy code
         # Solver-val
         solver_name = (
             getattr(self.controller, "socp_solver_var", None).get()
             if hasattr(self.controller, "socp_solver_var")
             else "SCS"
         )
-        solver_map = {"ECOS": cp.ECOS, "SCS": cp.SCS, "ECOS_BB": cp.ECOS_BB}
+        solver_map = {"ECOS": cp.ECOS, "SCS": cp.SCS, "ECOS_BB": cp.ECOS_BB, "MOSEK": cp.MOSEK, "XPRESS": cp.XPRESS}
         solver = solver_map.get(solver_name, cp.SCS)
         try:
             min_amount = float(self.controller.min_amount_var.get())
         except Exception:
             min_amount = 0.0
-        if min_amount > 0 and solver_name not in ("MOSEK", "ECOS_BB"):
-            messagebox.showerror("SOCP Error", "min_amount > 0 requires MOSEK or ECOS_BB solver. Please select MOSEK, ECOS_BB or set min_amount to 0.")
+        if min_amount > 0 and solver_name not in ("MOSEK", "ECOS_BB", "XPRESS"):
+            messagebox.showerror("SOCP Error", "min_amount > 0 requires MOSEK, ECOS_BB, or XPRESS solver. Please select MOSEK, ECOS_BB, XPRESS or set min_amount to 0.")
             raise RuntimeError("Incompatible solver for min_amount > 0")
         if solver_name == "MOSEK":
             try:
@@ -1492,7 +1938,18 @@ class Start(tk.Frame):
                 solver = cp.ECOS_BB
             except Exception:
                 solver = cp.SCS
+        elif solver_name == "XPRESS":
+            try:
+                solver = cp.XPRESS
+            except Exception:
+                solver = cp.SCS
 
+
+
+
+        print(f"Using solver: {solver}")
+        
+        
         # z från target
         try:
             target_prob = float(self.controller.target_pct_var.get()) / 100.0
@@ -1667,7 +2124,7 @@ class Start(tk.Frame):
         except Exception:
             lambda_sparse = 0.01
         obj_terms.append(cost_vec @ x + lambda_sparse * cp.norm(x, 1))
-
+        print(f"Using solver: {solver}")
         problem = cp.Problem(cp.Minimize(cp.sum(obj_terms)), constraints)
         try:
             problem.solve(solver=solver, verbose=False)
